@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Support Chatbot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="chat-container">
+    <header>
+      <h1>Support Chatbot</h1>
+      <p>Ask me anything about our menu, timings, delivery, or returns.</p>
+    </header>
+
+    <div id="messages" class="messages"></div>
+
+    <form id="chat-form" class="chat-form">
+      <input id="question-input" type="text" placeholder="Type your question..." autocomplete="off" required>
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
