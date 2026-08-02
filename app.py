@@ -1,5 +1,7 @@
 """Flask app — ties the chat page to rag.py and stores history in SQLite."""
 
+import os
+
 from flask import Flask, jsonify, render_template, request
 
 import db
@@ -32,4 +34,6 @@ def history():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    port = int(os.environ.get("PORT", 5001))
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", debug=debug, port=port)

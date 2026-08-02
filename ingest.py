@@ -18,8 +18,7 @@ INDEX_PATH = "data/index.faiss"
 CHUNKS_PATH = "data/chunks.pkl"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
-CHUNK_SIZE = 500       # characters per chunk
-CHUNK_OVERLAP = 50     # characters shared between consecutive chunks
+CHUNK_SIZE = 600       # max characters per chunk
 
 
 def load_documents():
@@ -33,15 +32,22 @@ def load_documents():
     return docs
 
 
-def chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+def chunk_text(text, max_size=CHUNK_SIZE):
+    """Merge blank-line-separated paragraphs into chunks, keeping each FAQ
+    section intact instead of cutting it apart at a fixed character count."""
+    paragraphs = [p.strip() for p in text.strip().split("\n\n") if p.strip()]
     chunks = []
-    start = 0
-    text = text.strip()
-    while start < len(text):
-        end = start + size
-        chunks.append(text[start:end].strip())
-        start += size - overlap
-    return [c for c in chunks if c]
+    current = ""
+    for p in paragraphs:
+        candidate = f"{current}\n\n{p}".strip() if current else p
+        if len(candidate) > max_size and current:
+            chunks.append(current)
+            current = p
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def build_index():

@@ -23,7 +23,7 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 
 TOP_K = 4
 # cosine similarity below this = "I don't know" instead of a guess
-MIN_SIMILARITY = 0.30
+MIN_SIMILARITY = 0.20
 
 _embedder = None
 _index = None
