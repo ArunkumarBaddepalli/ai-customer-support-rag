@@ -5,6 +5,9 @@ guessing. Built with Retrieval-Augmented Generation (RAG): it looks up the most 
 pieces of your docs first, then asks an LLM to answer using only that context — and shows
 which document each answer came from.
 
+**Live demo:** https://ai-customer-support-rag-mpki.onrender.com
+*(free-tier hosting sleeps after ~15 min idle — first request after a while can take 30-60s to wake up)*
+
 ## Why RAG instead of just calling ChatGPT/Gemini directly?
 
 A plain LLM only knows what it was trained on — it has never seen your company's FAQ,
@@ -107,7 +110,7 @@ python eval.py
 - [x] Answers from your own documents
 - [x] Shows the source document per answer
 - [x] Saves chat history (SQLite)
-- [ ] Deployed with a public link
+- [x] Deployed with a public link
 - [x] README
 
 ## Roadmap / possible extensions
