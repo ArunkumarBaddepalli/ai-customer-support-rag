@@ -20,6 +20,15 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 
 CHUNK_SIZE = 600       # max characters per chunk
 
+_model = None
+
+
+def _get_model():
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(EMBED_MODEL)
+    return _model
+
 
 def load_documents():
     docs = []
@@ -62,7 +71,7 @@ def build_index():
 
     print(f"Loaded {len(docs)} document(s), split into {len(chunks)} chunk(s).")
 
-    model = SentenceTransformer(EMBED_MODEL)
+    model = _get_model()
     embeddings = model.encode([c["text"] for c in chunks], show_progress_bar=True)
     embeddings = np.array(embeddings, dtype="float32")
 

@@ -42,14 +42,15 @@ are grounded in facts you control.
 ## Project structure
 
 ```
-├── app.py            # Flask app — routes + wiring
+├── app.py            # Flask app — routes + wiring + /admin auth
 ├── rag.py             # embed question → search FAISS → ask LLM → answer + sources
 ├── ingest.py          # build the FAISS index from documents/
 ├── db.py              # SQLite chat history
+├── config.py          # branding (company name, tagline, logo, color)
 ├── documents/         # your source-of-truth text files
 ├── data/              # generated index + chunk store (gitignored)
-├── static/            # style.css, script.js
-├── templates/          # index.html
+├── static/            # style.css, script.js, admin.css
+├── templates/          # index.html, admin_login.html, admin_upload.html
 ├── requirements.txt
 ├── .env.example       # copy to .env and add your Groq key
 └── .gitignore
@@ -73,7 +74,32 @@ python app.py                   # starts the web app on http://localhost:5001
 ```
 
 Add your own documents by dropping `.txt` files into `documents/` and re-running
-`python ingest.py`.
+`python ingest.py` — or use the admin page below, no terminal needed.
+
+## Admin page — adding documents without touching code
+
+Visit `/admin` (e.g. http://localhost:5001/admin), log in with the password set in
+`ADMIN_PASSWORD`, then either upload a `.txt` file or paste a title + text. Saving
+rebuilds the search index immediately — the bot uses the new content on the very next
+question, no restart needed.
+
+- If `ADMIN_PASSWORD` isn't set, `/admin` is disabled entirely (returns 503) — this is
+  meant for technical staff/managers, not public access.
+- **On free-tier hosts (Render, etc.), uploads only persist until the next restart or
+  redeploy** — the container's disk is wiped on redeploy. For a permanent change, also
+  commit the `.txt` file to `documents/` in git so it's baked into the next deploy.
+
+## Branding — reskinning for a different company
+
+`config.py` (or the matching env vars) control the company name, tagline, logo emoji,
+and header color shown on the chat page — no template edits needed:
+
+```bash
+COMPANY_NAME=Acme Inc.
+COMPANY_TAGLINE=Ask me about orders, shipping, or returns.
+LOGO_EMOJI=📦
+BRAND_COLOR=#16a34a
+```
 
 ## What if the bot is wrong / doesn't know?
 
@@ -116,5 +142,6 @@ python eval.py
 ## Roadmap / possible extensions
 
 - Rewrite vague follow-up questions using recent chat context
-- Simple upload page for non-technical document updates
+- Persist admin-uploaded documents outside the container (S3, persistent disk, or a DB)
+  so they survive redeploys
 - Multi-language replies

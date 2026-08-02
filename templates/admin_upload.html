@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manage Documents — {{ company_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+</head>
+<body>
+  <div class="admin-box wide">
+    <div class="admin-header">
+      <h1>{{ company_name }} — Documents</h1>
+      <a href="{{ url_for('admin_logout') }}">Log out</a>
+    </div>
+
+    {% if message %}<p class="success">{{ message }}</p>{% endif %}
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    <h2>Current documents</h2>
+    <ul class="doc-list">
+      {% for doc in documents %}
+        <li>{{ doc }}</li>
+      {% else %}
+        <li class="empty">No documents yet.</li>
+      {% endfor %}
+    </ul>
+
+    <h2>Add / replace a document</h2>
+    <p class="hint">Upload a .txt file, or type a title and paste text below. Saving rebuilds the
+      search index immediately — the bot uses the new content right away.</p>
+
+    <form method="post" enctype="multipart/form-data" class="upload-form">
+      <label>Upload a .txt file</label>
+      <input type="file" name="file" accept=".txt">
+
+      <div class="divider">— or —</div>
+
+      <label>Title (used as the filename)</label>
+      <input type="text" name="title" placeholder="e.g. delivery-policy">
+
+      <label>Text</label>
+      <textarea name="text" rows="10" placeholder="Paste the FAQ / policy text here..."></textarea>
+
+      <button type="submit">Save and rebuild index</button>
+    </form>
+
+    <p class="hint warning">
+      Note: on hosted free-tier deploys, this file is written to the running container's disk —
+      it survives until the next restart/redeploy. For a permanent change, also add the file to
+      <code>documents/</code> in the git repo.
+    </p>
+  </div>
+</body>
+</html>

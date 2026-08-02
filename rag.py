@@ -43,6 +43,13 @@ def _load():
             _chunks = pickle.load(f)
 
 
+def reload_index():
+    """Force the next search() to re-read the index from disk (call after re-ingesting)."""
+    global _index, _chunks
+    _index = None
+    _chunks = None
+
+
 def _get_groq_client():
     global _groq_client
     if _groq_client is None:

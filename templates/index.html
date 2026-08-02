@@ -3,17 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Support Chatbot</title>
+  <title>{{ company_name }} — Support Chat</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>:root { --brand-color: {{ brand_color }}; }</style>
 </head>
 <body>
   <div class="chat-container">
     <header>
-      <h1>Support Chatbot</h1>
-      <p>Ask me anything about our menu, timings, delivery, or returns.</p>
+      <div class="logo">{{ logo_emoji }}</div>
+      <div>
+        <h1>{{ company_name }}</h1>
+        <p>{{ company_tagline }}</p>
+      </div>
     </header>
 
-    <div id="messages" class="messages"></div>
+    <div id="messages" class="messages">
+      <div class="empty-state">
+        <span class="empty-emoji">{{ logo_emoji }}</span>
+        <p>Ask a question to get started — I'll answer using {{ company_name }}'s own docs and show you the source.</p>
+      </div>
+    </div>
 
     <form id="chat-form" class="chat-form">
       <input id="question-input" type="text" placeholder="Type your question..." autocomplete="off" required>
