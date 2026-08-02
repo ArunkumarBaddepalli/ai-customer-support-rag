@@ -1,14 +1,10 @@
 const form = document.getElementById("chat-form");
 const input = document.getElementById("question-input");
 const messages = document.getElementById("messages");
-
-function clearEmptyState() {
-  const empty = messages.querySelector(".empty-state");
-  if (empty) empty.remove();
-}
+const chips = document.getElementById("chips");
 
 function addMessage(text, role, sources = []) {
-  clearEmptyState();
+  if (chips) chips.remove();  // openers stop being useful once talking
 
   const row = document.createElement("div");
   row.className = `row ${role}`;
@@ -53,6 +49,15 @@ function showTyping() {
   return row;
 }
 
+if (chips) {
+  chips.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    input.value = chip.textContent.trim();
+    form.requestSubmit();
+  });
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const question = input.value.trim();
@@ -65,7 +70,7 @@ form.addEventListener("submit", async (e) => {
   const typingRow = showTyping();
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch(window.CHAT_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),

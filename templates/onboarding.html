@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Set up your bot — SupportBot{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Set up your bot</h1>
+  <p class="hint">
+    Two things and you're live. Your chat page will be at
+    <code>/c/{{ tenant.slug }}</code>.
+  </p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    <h2>1. How your bot looks</h2>
+
+    <label>Business name</label>
+    <input type="text" name="company_name" value="{{ tenant.company_name }}" required>
+
+    <label>Tagline</label>
+    <input type="text" name="company_tagline" value="{{ tenant.company_tagline }}"
+           placeholder="Ask me about our menu, timings, or delivery.">
+
+    <label>Logo <span class="hint-inline">(optional)</span></label>
+    <div class="logo-picker">
+      <div class="logo-preview" id="logo-preview">{% include "_logo.html" %}</div>
+      <div class="logo-actions">
+        <label class="file-btn">
+          Upload image
+          <input type="file" name="logo" accept="image/png,image/jpeg,image/gif,image/webp"
+                 id="logo-input" hidden>
+        </label>
+        <span class="hint">PNG, JPG, GIF or WebP · up to 1 MB · square works best</span>
+      </div>
+    </div>
+
+    <div class="row-2">
+      <div>
+        <label>Logo emoji <span class="hint-inline">(used when no image is set)</span></label>
+        <input type="text" name="logo_emoji" value="{{ tenant.logo_emoji }}" maxlength="4">
+      </div>
+      <div>
+        <label>Brand colour</label>
+        <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
+      </div>
+    </div>
+
+    <label>Support contact</label>
+    <input type="text" name="support_contact" value="{{ tenant.support_contact }}"
+           placeholder="+1-555-0100 or support@yourcompany.com">
+    <span class="hint">Shown when the bot can't answer, so customers aren't left stuck.</span>
+
+    <h2>2. What your bot knows</h2>
+    <p class="hint">
+      Paste your FAQ, policies, prices — anything customers ask about. You can add more
+      later. Leave blank to skip for now.
+    </p>
+
+    <label>Document title</label>
+    <input type="text" name="title" placeholder="faq" value="faq">
+
+    <label>Text</label>
+    <textarea name="text" rows="10"
+      placeholder="Timings:&#10;We are open 11am to 11pm every day.&#10;&#10;Delivery:&#10;Free over $30, otherwise $4."></textarea>
+
+    <div class="divider">— or upload a .txt file —</div>
+    <input type="file" name="file" accept=".txt">
+
+    <button type="submit">Finish setup</button>
+  </form>
+</div>
+
+<script>
+  const logoInput = document.getElementById("logo-input");
+  const logoPreview = document.getElementById("logo-preview");
+  logoInput?.addEventListener("change", () => {
+    const file = logoInput.files[0];
+    if (!file) return;
+    logoPreview.innerHTML = "";
+    const img = document.createElement("img");
+    img.className = "logo-img";
+    img.src = URL.createObjectURL(file);
+    logoPreview.appendChild(img);
+  });
+</script>
+{% endblock %}

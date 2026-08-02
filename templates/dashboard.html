@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Documents — {{ tenant.company_name }}{% endblock %}
+
+{% block content %}
+{% with active = 'documents' %}{% include "_dash_nav.html" %}{% endwith %}
+
+<div class="card">
+  {% if message %}<p class="success">{{ message }}</p>{% endif %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <h2>What your bot knows</h2>
+  {% if documents %}
+    <ul class="doc-list">
+      {% for doc in documents %}
+        <li>
+          <span>{{ doc }}</span>
+          <form method="post" action="{{ url_for('delete_document', name=doc) }}"
+                onsubmit="return confirm('Delete {{ doc }}? The bot will stop using it.')">
+            <button class="link-danger" type="submit">Delete</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="hint">
+      No documents yet — your bot can't answer anything about the business until you
+      add one.
+    </p>
+  {% endif %}
+
+  <h2>Add a document</h2>
+  <p class="hint">Saving rebuilds the search index straight away — no restart needed.</p>
+
+  <form method="post" enctype="multipart/form-data">
+    <label>Title</label>
+    <input type="text" name="title" placeholder="e.g. delivery-policy">
+
+    <label>Text</label>
+    <textarea name="text" rows="9" placeholder="Paste the FAQ or policy text here..."></textarea>
+
+    <div class="divider">— or upload a .txt file —</div>
+    <input type="file" name="file" accept=".txt">
+
+    <button type="submit">Save and re-index</button>
+  </form>
+
+  <p class="hint warning">
+    On free-tier hosting the container's disk is wiped on every redeploy, taking
+    uploaded documents with it. Fine for a demo; a persistent disk or object storage
+    would be needed for production.
+  </p>
+</div>
+{% endblock %}

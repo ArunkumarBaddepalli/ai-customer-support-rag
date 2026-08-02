@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}SupportBot — an AI support agent trained on your own docs{% endblock %}
+{% block body_class %}landing-page{% endblock %}
+{% block main_class %}landing{% endblock %}
+
+{% block head %}
+  <script>
+    // Gate the reveal animation on JS being alive. Runs before first paint so
+    // there is no flash, and if anything below fails the content stays visible.
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        && "IntersectionObserver" in window) {
+      document.documentElement.classList.add("js-reveal");
+    }
+  </script>
+{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="glow"></div>
+
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <span class="pill"><i class="dot"></i> Answers from your docs — never invented</span>
+      <h1>Customer support that actually knows <em>your</em> business.</h1>
+      <p class="lede">
+        Paste in your FAQ, prices and policies. Get a chat page you can share with
+        customers — one that cites the document it used, and says “I don’t know”
+        instead of making something up.
+      </p>
+      <div class="cta-row">
+        <a class="btn" href="{{ url_for('signup') }}">Create your bot — free</a>
+        <a class="btn ghost" href="{{ url_for('chatbot', slug='pizza-palace') }}">
+          Try the live demo <span aria-hidden="true">→</span>
+        </a>
+      </div>
+      <p class="micro">No credit card · Live in about two minutes</p>
+    </div>
+
+    <div class="hero-demo" aria-hidden="true">
+      <div class="widget float">
+        <div class="widget-top">
+          <span class="widget-logo">🍕</span>
+          <div class="widget-id">
+            <strong>Pizza Palace</strong>
+            <small>Ask about our menu, timings, or delivery</small>
+          </div>
+          <span class="widget-live"><i></i>online</span>
+        </div>
+        <!-- filled in by landing.js so it types itself out -->
+        <div class="widget-body" id="demo-stage"></div>
+        <div class="widget-input"><span>Type your question…</span><i>Send</i></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="band-inner">
+    <span>Every answer cites its source</span>
+    <span>Refuses instead of guessing</span>
+    <span>Your branding, your link</span>
+    <span>Live in ~2 minutes</span>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="sec-title" data-reveal>Live in three steps</h2>
+  <p class="sec-sub" data-reveal data-delay="60">No integration work, no training data, no ML knowledge.</p>
+
+  <ol class="steps">
+    <li class="step" data-reveal>
+      <span class="step-n">1</span>
+      <div class="step-body">
+        <h3>Sign up</h3>
+        <p>Email and password — your workspace is created instantly. No card, no sales call.</p>
+      </div>
+      <div class="step-art">
+        <span class="fake-field">you@yourbusiness.com</span>
+        <span class="fake-field">••••••••</span>
+        <span class="fake-btn">Create account</span>
+      </div>
+    </li>
+
+    <li class="step" data-reveal data-delay="80">
+      <span class="step-n">2</span>
+      <div class="step-body">
+        <h3>Add what you know</h3>
+        <p>Paste your FAQ, prices and policies, or upload a <code>.txt</code>. It re-indexes the moment you save.</p>
+      </div>
+      <div class="step-art">
+        <span class="fake-doc">📄 faq.txt<i>indexed</i></span>
+        <span class="fake-doc">📄 delivery.txt<i>indexed</i></span>
+        <span class="fake-doc muted">＋ add another</span>
+      </div>
+    </li>
+
+    <li class="step" data-reveal data-delay="160">
+      <span class="step-n">3</span>
+      <div class="step-body">
+        <h3>Share the link</h3>
+        <p>You get a public chat page customers can open on any device — put it on your site, bio, or receipts.</p>
+      </div>
+      <div class="step-art">
+        <span class="fake-url">yoursite.com<b>/c/your-business</b></span>
+        <span class="fake-btn ghost">Copy link</span>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<section class="section">
+  <h2 class="sec-title" data-reveal>Why not just use ChatGPT?</h2>
+  <p class="sec-sub" data-reveal data-delay="60">
+    Same question, same model — the only difference is whether it can see your
+    documents. These are real, unedited replies.
+  </p>
+
+  <div class="compare">
+    <div class="compare-col" data-reveal>
+      <div class="compare-head bad">A general AI assistant</div>
+      <div class="compare-q">What time does Pizza Palace close?</div>
+      <div class="compare-a">
+        I’m not aware of any specific information about a Pizza Palace. There may be
+        multiple locations with different hours…
+      </div>
+      <div class="compare-q">How much is a large pepperoni?</div>
+      <div class="compare-a">
+        I’m not aware of any information about a specific restaurant called “Pizza
+        Palace” or its menu prices…
+      </div>
+      <p class="compare-note">Honest — but your customer still leaves with nothing.</p>
+    </div>
+
+    <div class="compare-col win" data-reveal data-delay="90">
+      <span class="ribbon">Your bot</span>
+      <div class="compare-head good">Trained on your documents</div>
+      <div class="compare-q">What time do you close?</div>
+      <div class="compare-a">
+        We’re open every day 11:00 AM to 11:00 PM. The kitchen closes 30 minutes
+        before for last orders.
+        <span class="cite">📄 faq.txt</span>
+      </div>
+      <div class="compare-q">How much is a large pepperoni?</div>
+      <div class="compare-a">
+        A large Pepperoni pizza costs ₹459.
+        <span class="cite">📄 faq.txt</span>
+      </div>
+      <p class="compare-note">Answered from your documents, with the source shown.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="sec-title" data-reveal>Built to not embarrass you</h2>
+  <p class="sec-sub" data-reveal data-delay="60">Real customers type more than neat questions. It handles that.</p>
+
+  <div class="feat-grid">
+    <article class="feat" data-reveal>
+      <span class="feat-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/>
+        </svg>
+      </span>
+      <h3>Shows its source</h3>
+      <p>Every answer names the document it came from — and cites nothing when it didn’t use one.</p>
+    </article>
+
+    <article class="feat" data-reveal data-delay="60">
+      <span class="feat-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>
+      </span>
+      <h3>Won’t invent facts</h3>
+      <p>If nothing relevant is found, it says so and hands over your support contact.</p>
+    </article>
+
+    <article class="feat" data-reveal data-delay="120">
+      <span class="feat-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+      </span>
+      <h3>Handles small talk</h3>
+      <p>“Hi”, “thanks”, “how are you” get a human reply, not a robotic refusal.</p>
+    </article>
+
+    <article class="feat" data-reveal>
+      <span class="feat-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><path d="M8 15s1.5 2 4 2 4-2 4-2"/>
+          <line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
+        </svg>
+      </span>
+      <h3>Keeps calm under abuse</h3>
+      <p>Frustration and insults get de-escalated and routed to a real person.</p>
+    </article>
+
+    <article class="feat" data-reveal data-delay="60">
+      <span class="feat-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><line x1="4.9" y1="4.9" x2="19.1" y2="19.1"/>
+        </svg>
+      </span>
+      <h3>Stays on topic</h3>
+      <p>Off-topic trivia is declined — even when the model knows the answer.</p>
+    </article>
+
+    <article class="feat" data-reveal data-delay="120">
+      <span class="feat-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/>
+          <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/>
+          <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/>
+          <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
+          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.7 1.7-1.6 0-.4-.2-.8-.5-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16c3.3 0 6-2.7 6-6 0-4.9-4.5-8.6-10-8.6z"/>
+        </svg>
+      </span>
+      <h3>Looks like you</h3>
+      <p>Your logo, name and brand colour on the chat page. No code required.</p>
+    </article>
+  </div>
+</section>
+
+<section class="closer" data-reveal>
+  <h2>Ready to try it?</h2>
+  <p>Set it up with one paste of your FAQ. Everything is editable later.</p>
+  <a class="btn" href="{{ url_for('signup') }}">Create your bot — free</a>
+</section>
+
+<script src="{{ url_for('static', filename='landing.js') }}" defer></script>
+{% endblock %}

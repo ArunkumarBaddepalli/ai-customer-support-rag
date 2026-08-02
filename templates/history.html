@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Chat history — {{ tenant.company_name }}{% endblock %}
+
+{% block content %}
+{% with active = 'history' %}{% include "_dash_nav.html" %}{% endwith %}
+
+<div class="card">
+  <h2>What customers have asked</h2>
+  <p class="hint">
+    The most recent {{ rows|length }} conversation{{ '' if rows|length == 1 else 's' }}.
+    Questions with no source are the ones your documents couldn't answer — worth
+    reading, they show you what to add next.
+  </p>
+
+  {% if rows %}
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Question</th><th>Answer</th><th>Source</th></tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.question }}</td>
+              <td>{{ row.answer }}</td>
+              <td class="dim">{{ row.sources or '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="hint">No conversations yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

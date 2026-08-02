@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Profile — {{ tenant.company_name }}{% endblock %}
+
+{% block content %}
+{% with active = 'profile' %}{% include "_dash_nav.html" %}{% endwith %}
+
+<div class="card">
+  {% if message %}<p class="success">{{ message }}</p>{% endif %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <h2>Email</h2>
+  <form method="post">
+    <input type="hidden" name="form_type" value="email">
+    <label>Email address</label>
+    <input type="email" name="email" value="{{ account.email }}" required>
+    <button type="submit">Update email</button>
+  </form>
+
+  <h2>Password</h2>
+  <form method="post">
+    <input type="hidden" name="form_type" value="password">
+
+    <label>Current password</label>
+    <input type="password" name="current_password" required>
+
+    <label>New password</label>
+    <input type="password" name="new_password" minlength="8" required>
+
+    <label>Confirm new password</label>
+    <input type="password" name="confirm_password" minlength="8" required>
+
+    <button type="submit">Update password</button>
+  </form>
+</div>
+{% endblock %}

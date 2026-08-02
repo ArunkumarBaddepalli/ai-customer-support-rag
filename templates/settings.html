@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ tenant.company_name }}{% endblock %}
+
+{% block content %}
+{% with active = 'settings' %}{% include "_dash_nav.html" %}{% endwith %}
+
+<div class="card">
+  {% if message %}<p class="success">{{ message }}</p>{% endif %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <h2>How your bot looks</h2>
+  <form method="post" enctype="multipart/form-data">
+    <label>Business name</label>
+    <input type="text" name="company_name" value="{{ tenant.company_name }}" required>
+
+    <label>Tagline</label>
+    <input type="text" name="company_tagline" value="{{ tenant.company_tagline }}">
+
+    <label>Logo</label>
+    <div class="logo-picker">
+      <div class="logo-preview" id="logo-preview">
+        {% include "_logo.html" %}
+      </div>
+      <div class="logo-actions">
+        <label class="file-btn">
+          Upload image
+          <input type="file" name="logo" accept="image/png,image/jpeg,image/gif,image/webp"
+                 id="logo-input" hidden>
+        </label>
+        <span class="hint">PNG, JPG, GIF or WebP · up to 1 MB · square works best</span>
+        {% if tenant.logo_path %}
+          <label class="remove-logo">
+            <input type="checkbox" name="remove_logo" value="1"> Remove logo and use the emoji instead
+          </label>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row-2">
+      <div>
+        <label>Logo emoji <span class="hint-inline">(used when no image is set)</span></label>
+        <input type="text" name="logo_emoji" value="{{ tenant.logo_emoji }}" maxlength="4">
+      </div>
+      <div>
+        <label>Brand colour</label>
+        <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
+      </div>
+    </div>
+
+    <label>Support contact</label>
+    <input type="text" name="support_contact" value="{{ tenant.support_contact }}"
+           placeholder="+1-555-0100 or support@yourcompany.com">
+    <span class="hint">Shown whenever the bot can't answer a question.</span>
+
+    <button type="submit">Save settings</button>
+  </form>
+
+  <h2>Your bot's address</h2>
+  <p class="hint">
+    Share this link with customers:
+    <a href="{{ url_for('chatbot', slug=tenant.slug) }}" target="_blank">
+      /c/{{ tenant.slug }}</a>
+  </p>
+</div>
+
+<script>
+  // show the chosen image straight away, before saving
+  const logoInput = document.getElementById("logo-input");
+  const logoPreview = document.getElementById("logo-preview");
+  logoInput?.addEventListener("change", () => {
+    const file = logoInput.files[0];
+    if (!file) return;
+    logoPreview.innerHTML = "";
+    const img = document.createElement("img");
+    img.className = "logo-img";
+    img.src = URL.createObjectURL(file);
+    logoPreview.appendChild(img);
+  });
+</script>
+{% endblock %}

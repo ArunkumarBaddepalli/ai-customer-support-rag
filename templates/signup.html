@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Sign up — SupportBot{% endblock %}
+
+{% block content %}
+<div class="card narrow">
+  <h1>Create your account</h1>
+  <p class="hint">One account, one business workspace.</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post">
+    <label>Business name</label>
+    <input type="text" name="company_name" value="{{ form.company_name }}"
+           placeholder="e.g. Pizza Palace" required autofocus>
+
+    <label>Work email</label>
+    <input type="email" name="email" value="{{ form.email }}" required>
+
+    <label>Password</label>
+    <input type="password" name="password" minlength="8" required>
+    <span class="hint">At least 8 characters.</span>
+
+    <label>Confirm password</label>
+    <input type="password" name="confirm" minlength="8" required>
+
+    <button type="submit">Create account</button>
+  </form>
+
+  <p class="hint centered">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+{% endblock %}

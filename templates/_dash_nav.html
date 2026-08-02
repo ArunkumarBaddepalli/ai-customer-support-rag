@@ -1,0 +1,16 @@
+<div class="dash-head">
+  <div>
+    <h1><span class="dash-logo">{% include "_logo.html" %}</span> {{ tenant.company_name }}</h1>
+    <p class="hint">
+      Live bot:
+      <a href="{{ url_for('chatbot', slug=tenant.slug) }}" target="_blank">/c/{{ tenant.slug }}</a>
+    </p>
+  </div>
+</div>
+
+<nav class="tabs">
+  <a href="{{ url_for('dashboard') }}" class="{{ 'on' if active == 'documents' }}">Documents</a>
+  <a href="{{ url_for('settings') }}" class="{{ 'on' if active == 'settings' }}">Settings</a>
+  <a href="{{ url_for('history') }}" class="{{ 'on' if active == 'history' }}">Chat history</a>
+  <a href="{{ url_for('profile') }}" class="{{ 'on' if active == 'profile' }}">Profile</a>
+</nav>

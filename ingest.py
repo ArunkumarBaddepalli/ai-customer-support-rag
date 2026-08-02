@@ -1,21 +1,27 @@
 """
-Reads every .txt file in documents/, splits into chunks, embeds them,
-and builds a FAISS index for fast similarity search.
+Builds a FAISS index per tenant.
 
-Run this once whenever documents/ changes:
-    python ingest.py
+Each business gets its own directory of documents and its own index, so one
+tenant's search can never surface another tenant's content:
+
+    documents/<slug>/*.txt   ->   data/<slug>/index.faiss + chunks.pkl
+
+CLI (rebuild one tenant):
+    python ingest.py <slug>
 """
 
 import os
 import pickle
+import sys
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-DOCS_DIR = "documents"
-INDEX_PATH = "data/index.faiss"
-CHUNKS_PATH = "data/chunks.pkl"
+import db
+
+DOCS_ROOT = "documents"
+DATA_ROOT = "data"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
 CHUNK_SIZE = 600       # max characters per chunk
@@ -30,13 +36,42 @@ def _get_model():
     return _model
 
 
-def load_documents():
+def _safe_slug(slug):
+    """Never let a slug reach the filesystem without validation."""
+    if not db.SLUG_RE.match(slug or ""):
+        raise ValueError(f"Invalid workspace address: {slug!r}")
+    return slug
+
+
+def docs_dir(slug):
+    path = os.path.join(DOCS_ROOT, _safe_slug(slug))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def data_dir(slug):
+    path = os.path.join(DATA_ROOT, _safe_slug(slug))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def index_path(slug):
+    return os.path.join(data_dir(slug), "index.faiss")
+
+
+def chunks_path(slug):
+    return os.path.join(data_dir(slug), "chunks.pkl")
+
+
+def list_documents(slug):
+    return sorted(f for f in os.listdir(docs_dir(slug)) if f.endswith(".txt"))
+
+
+def load_documents(slug):
     docs = []
-    for filename in sorted(os.listdir(DOCS_DIR)):
-        if not filename.endswith(".txt"):
-            continue
-        path = os.path.join(DOCS_DIR, filename)
-        with open(path, "r", encoding="utf-8") as f:
+    directory = docs_dir(slug)
+    for filename in list_documents(slug):
+        with open(os.path.join(directory, filename), "r", encoding="utf-8") as f:
             docs.append((filename, f.read()))
     return docs
 
@@ -59,20 +94,22 @@ def chunk_text(text, max_size=CHUNK_SIZE):
     return chunks
 
 
-def build_index():
-    docs = load_documents()
+def build_index(slug, verbose=False):
+    docs = load_documents(slug)
     if not docs:
-        raise SystemExit(f"No .txt files found in {DOCS_DIR}/. Add at least one document first.")
+        # No documents yet (fresh workspace) — clear any stale index.
+        for path in (index_path(slug), chunks_path(slug)):
+            if os.path.exists(path):
+                os.remove(path)
+        return 0
 
     chunks = []  # list of {"text": str, "source": filename}
     for filename, text in docs:
         for chunk in chunk_text(text):
             chunks.append({"text": chunk, "source": filename})
 
-    print(f"Loaded {len(docs)} document(s), split into {len(chunks)} chunk(s).")
-
     model = _get_model()
-    embeddings = model.encode([c["text"] for c in chunks], show_progress_bar=True)
+    embeddings = model.encode([c["text"] for c in chunks], show_progress_bar=verbose)
     embeddings = np.array(embeddings, dtype="float32")
 
     # normalize so inner-product search behaves like cosine similarity
@@ -81,13 +118,18 @@ def build_index():
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
 
-    os.makedirs("data", exist_ok=True)
-    faiss.write_index(index, INDEX_PATH)
-    with open(CHUNKS_PATH, "wb") as f:
+    faiss.write_index(index, index_path(slug))
+    with open(chunks_path(slug), "wb") as f:
         pickle.dump(chunks, f)
 
-    print(f"Index built: {INDEX_PATH} ({index.ntotal} vectors)")
+    if verbose:
+        print(f"[{slug}] {len(docs)} document(s), {len(chunks)} chunk(s) indexed.")
+    return len(chunks)
 
 
 if __name__ == "__main__":
-    build_index()
+    db.init_db()
+    if len(sys.argv) > 1:
+        build_index(sys.argv[1], verbose=True)
+    else:
+        raise SystemExit("Usage: python ingest.py <workspace-slug>")

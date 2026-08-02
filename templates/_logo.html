@@ -1,0 +1,7 @@
+{# Renders a tenant's uploaded logo, falling back to their emoji. #}
+{% if tenant.logo_path %}
+  <img src="{{ url_for('static', filename=tenant.logo_path) }}"
+       alt="{{ tenant.company_name }}" class="logo-img">
+{% else %}
+  {{ tenant.logo_emoji }}
+{% endif %}

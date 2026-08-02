@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ tenant.company_name }} — Support</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>:root { --brand-color: {{ tenant.brand_color }}; }</style>
+</head>
+<body>
+  <div class="page">
+    <div class="chat-container">
+      <header>
+        <div class="logo">{% include "_logo.html" %}</div>
+        <div class="who">
+          <h1>{{ tenant.company_name }}</h1>
+          <p>{{ tenant.company_tagline or 'How can we help?' }}</p>
+        </div>
+        <span class="status"><i></i>online</span>
+      </header>
+
+      <div id="messages" class="messages">
+        <div class="row bot">
+          <div class="avatar">🤖</div>
+          <div class="message">
+            Hi! Welcome to {{ tenant.company_name }}.
+            {{ tenant.company_tagline or 'How can I help you today?' }}
+          </div>
+        </div>
+        <div class="chips" id="chips">
+          <button class="chip" type="button">What are your timings?</button>
+          <button class="chip" type="button">How does delivery work?</button>
+          <button class="chip" type="button">What's your refund policy?</button>
+        </div>
+      </div>
+
+      <form id="chat-form" class="chat-form">
+        <input id="question-input" type="text" placeholder="Type your question…"
+               autocomplete="off" required>
+        <button type="submit">Send</button>
+      </form>
+    </div>
+
+    <p class="powered">Answers come from {{ tenant.company_name }}'s own documents.</p>
+  </div>
+
+  <script>window.CHAT_ENDPOINT = "{{ url_for('chat_api', slug=tenant.slug) }}";</script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
