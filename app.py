@@ -4,6 +4,10 @@ and exposes a password-gated /admin page for uploading new FAQ documents."""
 import os
 from functools import wraps
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.utils import secure_filename
 

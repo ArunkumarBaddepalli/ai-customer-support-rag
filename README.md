@@ -99,7 +99,12 @@ COMPANY_NAME=Acme Inc.
 COMPANY_TAGLINE=Ask me about orders, shipping, or returns.
 LOGO_EMOJI=📦
 BRAND_COLOR=#16a34a
+SUPPORT_CONTACT=support@acme.example or +1-555-0100
 ```
+
+`SUPPORT_CONTACT` also gets used in the "I don't know" fallback reply — without it, the bot
+just says "contact support directly" with no actual contact info, which is a dead end for
+the user. Set it to a real phone/email so the fallback is actually useful.
 
 ## What if the bot is wrong / doesn't know?
 

@@ -12,9 +12,12 @@ import pickle
 import faiss
 import numpy as np
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
+
+from sentence_transformers import SentenceTransformer
+
+import config
 
 INDEX_PATH = "data/index.faiss"
 CHUNKS_PATH = "data/chunks.pkl"
@@ -93,11 +96,12 @@ def ask(question):
     results = search(question)
 
     if not results or results[0]["score"] < MIN_SIMILARITY:
-        return {
-            "answer": "I'm not sure about that based on the information I have. "
-                      "Please contact support directly for help with this.",
-            "sources": [],
-        }
+        answer = "I'm not sure about that based on the information I have."
+        if config.SUPPORT_CONTACT:
+            answer += f" Please contact {config.SUPPORT_CONTACT} for help with this."
+        else:
+            answer += " Please contact support directly for help with this."
+        return {"answer": answer, "sources": []}
 
     prompt = build_prompt(question, results)
     client = _get_groq_client()
