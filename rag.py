@@ -15,6 +15,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Keep torch single-threaded. Each worker thread allocates its own buffers, and
+# on a small instance that headroom is needed for request handling — the app was
+# being OOM-killed. Indexing a handful of FAQ documents doesn't need the
+# parallelism anyway.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+import torch
+
+torch.set_num_threads(1)
+
 from sentence_transformers import SentenceTransformer
 
 import ingest

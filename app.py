@@ -27,12 +27,12 @@ load_dotenv()
 from flask import (
     Flask, abort, jsonify, redirect, render_template, request, session, url_for
 )
-from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 import db
 import ingest
 import rag
+from security import hash_password, verify_password
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
@@ -42,7 +42,6 @@ db.init_db()
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LENGTH = 8
-
 
 def current_user():
     user_id = session.get("user_id")
@@ -109,7 +108,7 @@ def signup():
             if password != confirm:
                 raise ValueError("Passwords don't match.")
 
-            user_id = db.create_user(form["email"], generate_password_hash(password))
+            user_id = db.create_user(form["email"], hash_password(password))
             slug = db.unique_slug(form["company_name"])
             db.create_tenant(user_id, form["company_name"], slug)
 
@@ -134,7 +133,7 @@ def login():
         password = request.form.get("password") or ""
         user = db.get_user_by_email(email)
 
-        if user and check_password_hash(user["password_hash"], password):
+        if user and verify_password(user["password_hash"], password):
             session.clear()
             session["user_id"] = user["id"]
             tenant = db.get_tenant_for_user(user["id"])
@@ -284,13 +283,13 @@ def profile(tenant):
                 current = request.form.get("current_password") or ""
                 new = request.form.get("new_password") or ""
                 confirm = request.form.get("confirm_password") or ""
-                if not check_password_hash(user["password_hash"], current):
+                if not verify_password(user["password_hash"], current):
                     raise ValueError("Current password is incorrect.")
                 if len(new) < MIN_PASSWORD_LENGTH:
                     raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
                 if new != confirm:
                     raise ValueError("New passwords don't match.")
-                db.update_user_password(user["id"], generate_password_hash(new))
+                db.update_user_password(user["id"], hash_password(new))
                 message = "Password updated."
             user = current_user()
         except ValueError as exc:

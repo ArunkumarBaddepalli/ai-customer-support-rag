@@ -16,6 +16,16 @@ import sys
 
 import faiss
 import numpy as np
+
+# see the note in rag.py — keep torch single-threaded to stay inside the
+# memory budget of a small instance
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+import torch
+
+torch.set_num_threads(1)
+
 from sentence_transformers import SentenceTransformer
 
 import db

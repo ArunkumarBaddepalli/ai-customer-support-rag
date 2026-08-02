@@ -7,7 +7,7 @@
 import os
 import shutil
 
-from werkzeug.security import generate_password_hash
+from security import hash_password
 
 import db
 import ingest
@@ -25,7 +25,7 @@ def seed():
     if user:
         user_id = user["id"]
     else:
-        user_id = db.create_user(DEMO_EMAIL, generate_password_hash(DEMO_PASSWORD))
+        user_id = db.create_user(DEMO_EMAIL, hash_password(DEMO_PASSWORD))
 
     tenant = db.get_tenant_by_slug(DEMO_SLUG)
     if not tenant:
