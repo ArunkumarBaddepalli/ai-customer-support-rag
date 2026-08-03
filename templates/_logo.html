@@ -1,7 +1,9 @@
-{# Renders a tenant's uploaded logo, falling back to their emoji. #}
-{% if tenant.logo_path %}
-  <img src="{{ url_for('static', filename=tenant.logo_path) }}"
+{# A tenant's logo: their uploaded image, or their initial on the brand colour.
+   Images are served from the database, not the filesystem, so they survive a
+   redeploy. #}
+{% if tenant.logo_bytes %}
+  <img src="{{ url_for('tenant_logo', slug=tenant.slug) }}"
        alt="{{ tenant.company_name }}" class="logo-img">
 {% else %}
-  {{ tenant.logo_emoji }}
+  <span class="logo-initial">{{ tenant.company_name[:1] | upper }}</span>
 {% endif %}

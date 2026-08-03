@@ -1,0 +1,40 @@
+PixelCart — Online Store Help
+
+About us:
+PixelCart sells refurbished laptops, phones and accessories. Every device is tested, cleaned and comes with a warranty.
+
+Shipping:
+Standard shipping is $5 and takes 3 to 5 working days. Express is $12 and takes 1 to 2 working days. Shipping is free on orders over $150. We dispatch Monday to Friday; orders placed after 2 PM ship the next working day.
+
+International shipping:
+We ship to Canada and Mexico. International delivery takes 7 to 14 working days and costs $25. Customers are responsible for any customs duties.
+
+Order tracking:
+You get a tracking link by email as soon as your order ships. If it hasn't arrived within 10 working days of dispatch, contact us and we'll open an investigation with the carrier.
+
+Warranty:
+All refurbished laptops and phones come with a 12-month warranty. Accessories carry a 6-month warranty. The warranty covers hardware faults but not accidental damage, liquid damage, or normal battery wear.
+
+Battery health:
+Every refurbished phone ships with a battery at 85% health or better. If yours arrives below 85%, we'll replace the battery free.
+
+Grading:
+Grade A means excellent, with no visible marks. Grade B has light scratches not visible in use. Grade C has visible cosmetic wear but works perfectly. Grading affects appearance only, never function.
+
+Returns:
+Return anything within 30 days of delivery for a full refund, provided it's in the condition you received it. Start a return from your account page and we'll email a prepaid label. Refunds are processed within 5 working days of the item arriving back.
+
+Faulty items:
+If an item develops a fault under warranty, contact us with your order number and a description. We'll repair it, replace it, or refund you. Return shipping for faulty items is free.
+
+Payment:
+We accept Visa, Mastercard, American Express, PayPal and Apple Pay. We also offer interest-free payment in 4 instalments on orders over $200.
+
+Data on returned devices:
+All devices are fully wiped and factory reset before resale. Please back up and sign out of your own accounts before returning a device to us.
+
+Order changes:
+You can change or cancel an order within 1 hour of placing it, from your account page. After that the order is usually already being picked and cannot be changed.
+
+Contact:
+Email help@pixelcart.example or call 555-0170, Monday to Friday 9 AM to 6 PM. We reply to emails within one working day.

@@ -724,6 +724,22 @@ button:hover { filter: brightness(1.06); }
 
 .logo-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+/* shown when a business hasn't uploaded an image */
+.logo-initial {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: var(--brand, var(--accent));
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.5em;
+  letter-spacing: -0.02em;
+}
+
+.logo-preview .logo-initial { font-size: 26px; }
+.dash-logo .logo-initial { font-size: 13px; }
+
 .logo-actions { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 
 .file-btn {
@@ -838,6 +854,64 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
 td.dim { color: var(--muted); white-space: nowrap; }
+th.num, td.num { width: 1%; white-space: nowrap; }
+td.right { text-align: right; white-space: nowrap; }
+td.right form { display: inline; }
+
+.count {
+  display: inline-block;
+  min-width: 26px;
+  text-align: center;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: #eef0ff;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+tr.done td { opacity: .5; }
+tr.done .count { background: #f1f2f4; color: var(--muted); }
+
+.verify-banner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  background: #fffaeb;
+  border-bottom: 1px solid #fbe7ae;
+  color: #8a5a10;
+  font-size: 13px;
+  padding: 9px 16px;
+  text-align: center;
+}
+
+.verify-banner form { display: inline; margin: 0; }
+.verify-banner button { color: #8a5a10; font-weight: 700; }
+
+.link-quiet {
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-quiet:hover { text-decoration: underline; filter: none; }
+
+.empty-box {
+  border: 1px dashed var(--line);
+  border-radius: 11px;
+  padding: 26px 20px;
+  text-align: center;
+  background: var(--soft);
+}
+
+.empty-box strong { display: block; color: var(--ink); margin-bottom: 4px; }
+.empty-box .hint { margin: 0; }
 
 /* ------------------------------------------------------------ responsive */
 

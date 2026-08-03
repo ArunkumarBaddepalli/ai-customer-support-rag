@@ -23,6 +23,15 @@
     </header>
   {% endblock %}
 
+  {% if user and not user.email_verified %}
+    <div class="verify-banner">
+      <span>Verify your email address to secure your account.</span>
+      <form method="post" action="{{ url_for('resend_verification') }}">
+        <button type="submit" class="link-quiet">Resend link</button>
+      </form>
+    </div>
+  {% endif %}
+
   <main class="{% block main_class %}wrap{% endblock %}">
     {% block content %}{% endblock %}
   </main>

@@ -15,15 +15,17 @@
     <h2>1. How your bot looks</h2>
 
     <label>Business name</label>
-    <input type="text" name="company_name" value="{{ tenant.company_name }}" required>
+    <input type="text" name="company_name" value="{{ tenant.company_name }}" required maxlength="100">
 
     <label>Tagline</label>
     <input type="text" name="company_tagline" value="{{ tenant.company_tagline }}"
            placeholder="Ask me about our menu, timings, or delivery.">
 
-    <label>Logo <span class="hint-inline">(optional)</span></label>
+    <label>Logo <span class="hint-inline">(optional — your initial is used otherwise)</span></label>
     <div class="logo-picker">
-      <div class="logo-preview" id="logo-preview">{% include "_logo.html" %}</div>
+      <div class="logo-preview" id="logo-preview" style="--brand:{{ tenant.brand_color }}">
+        {% include "_logo.html" %}
+      </div>
       <div class="logo-actions">
         <label class="file-btn">
           Upload image
@@ -34,21 +36,17 @@
       </div>
     </div>
 
-    <div class="row-2">
-      <div>
-        <label>Logo emoji <span class="hint-inline">(used when no image is set)</span></label>
-        <input type="text" name="logo_emoji" value="{{ tenant.logo_emoji }}" maxlength="4">
-      </div>
-      <div>
-        <label>Brand colour</label>
-        <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
-      </div>
-    </div>
+    <label>Brand colour</label>
+    <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
 
-    <label>Support contact</label>
-    <input type="text" name="support_contact" value="{{ tenant.support_contact }}"
-           placeholder="+1-555-0100 or support@yourcompany.com">
-    <span class="hint">Shown when the bot can't answer, so customers aren't left stuck.</span>
+    <label>Support phone <span class="hint-inline">(optional)</span></label>
+    <input type="tel" name="support_phone" value="{{ tenant.support_phone }}"
+           placeholder="+1 555 0100">
+
+    <label>Support email <span class="hint-inline">(optional)</span></label>
+    <input type="email" name="support_email" value="{{ tenant.support_email }}"
+           placeholder="support@yourcompany.com">
+    <span class="hint">Given to customers when the bot can't answer, so they aren't left stuck.</span>
 
     <h2>2. What your bot knows</h2>
     <p class="hint">

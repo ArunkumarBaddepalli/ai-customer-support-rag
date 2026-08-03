@@ -11,6 +11,6 @@
 <nav class="tabs">
   <a href="{{ url_for('dashboard') }}" class="{{ 'on' if active == 'documents' }}">Documents</a>
   <a href="{{ url_for('settings') }}" class="{{ 'on' if active == 'settings' }}">Settings</a>
-  <a href="{{ url_for('history') }}" class="{{ 'on' if active == 'history' }}">Chat history</a>
+  <a href="{{ url_for('gaps') }}" class="{{ 'on' if active == 'gaps' }}">Unanswered</a>
   <a href="{{ url_for('profile') }}" class="{{ 'on' if active == 'profile' }}">Profile</a>
 </nav>

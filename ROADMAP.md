@@ -19,7 +19,10 @@ reasoning behind each decision isn't lost.
 | Source citation — only when the model says it used the context | ✅ |
 | Behaviour routing — small talk, abuse, off-topic, unknown | ✅ |
 | Multi-tenant isolation — data, files and access, verified by test | ✅ |
-| Test suite — 41 cases including negative assertions | ✅ |
+| Postgres storage — signups, documents and logos survive redeploys | ✅ |
+| Email verification + password reset via Resend | ✅ |
+| Progressive login throttle (per-account + per-IP, no lockout) | ✅ |
+| Test suite — 41 eval cases + 96 end-to-end checks | ✅ |
 
 ---
 
@@ -110,11 +113,15 @@ than eyeballed, and it has already caught one "improvement" that wasn't.
 
 ## Also worth doing
 
+- **CSRF tokens** on state-changing forms (settings, document upload/delete,
+  password change). `SESSION_COOKIE_SAMESITE=Lax` blocks the classic cross-site
+  auto-submit vector in modern browsers, but that's not the same as real CSRF
+  protection. Not done — touches every form in the app, wanted explicit sign-off
+  before taking it on.
 - **Conversation memory** — each message is currently handled independently, so
   follow-ups ("how much?" after "do you have Margherita?") don't resolve.
-- **Persistent storage** — free-tier hosting wipes the container disk on every
-  redeploy, taking the database, uploaded documents and indexes with it.
-  Production needs Postgres plus object storage.
-- **Email verification and password reset** — signup currently trusts the address.
 - **Background indexing** — re-indexing happens in-process on upload, which won't
   hold up at real document volumes.
+- **login_attempts table has no pruning** — old throttle rows accumulate forever.
+  Harmless at small scale (one row per email/IP that's ever failed a login), but
+  worth a periodic cleanup before real traffic.

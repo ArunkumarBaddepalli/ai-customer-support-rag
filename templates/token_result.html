@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ "Email confirmed" if status == "verified" else "Link expired" }} — SupportBot{% endblock %}
+
+{% block content %}
+<div class="card narrow centered">
+  {% if status == "verified" %}
+    <h1>Email confirmed</h1>
+    <p class="hint">Thanks — your address is verified.</p>
+    <p><a href="{{ url_for('dashboard') }}">Go to dashboard</a></p>
+  {% else %}
+    <h1>Link expired</h1>
+    <p class="hint">
+      That link is invalid or has already been used.
+      {% if purpose == "reset" %}
+        Request a new one below.
+      {% else %}
+        You can ask for a new one from your dashboard.
+      {% endif %}
+    </p>
+    {% if purpose == "reset" %}
+      <p><a href="{{ url_for('forgot_password') }}">Request a new reset link</a></p>
+    {% else %}
+      <p><a href="{{ url_for('login') }}">Log in</a></p>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

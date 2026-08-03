@@ -1,10 +1,11 @@
 """
-Builds a FAISS index per tenant.
+Builds a FAISS index per tenant from the documents stored in the database.
 
-Each business gets its own directory of documents and its own index, so one
-tenant's search can never surface another tenant's content:
+The index is a *cache*, not the source of truth. Document text lives in
+Postgres, so on a fresh container (free hosting wipes the disk on every
+deploy) the index is simply rebuilt from the database on first use.
 
-    documents/<slug>/*.txt   ->   data/<slug>/index.faiss + chunks.pkl
+    documents table  ->  data/<slug>/index.faiss + chunks.pkl
 
 CLI (rebuild one tenant):
     python ingest.py <slug>
@@ -30,7 +31,6 @@ from sentence_transformers import SentenceTransformer
 
 import db
 
-DOCS_ROOT = "documents"
 DATA_ROOT = "data"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
@@ -53,12 +53,6 @@ def _safe_slug(slug):
     return slug
 
 
-def docs_dir(slug):
-    path = os.path.join(DOCS_ROOT, _safe_slug(slug))
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
 def data_dir(slug):
     path = os.path.join(DATA_ROOT, _safe_slug(slug))
     os.makedirs(path, exist_ok=True)
@@ -71,19 +65,6 @@ def index_path(slug):
 
 def chunks_path(slug):
     return os.path.join(data_dir(slug), "chunks.pkl")
-
-
-def list_documents(slug):
-    return sorted(f for f in os.listdir(docs_dir(slug)) if f.endswith(".txt"))
-
-
-def load_documents(slug):
-    docs = []
-    directory = docs_dir(slug)
-    for filename in list_documents(slug):
-        with open(os.path.join(directory, filename), "r", encoding="utf-8") as f:
-            docs.append((filename, f.read()))
-    return docs
 
 
 def chunk_text(text, max_size=CHUNK_SIZE):
@@ -104,22 +85,26 @@ def chunk_text(text, max_size=CHUNK_SIZE):
     return chunks
 
 
-def build_index(slug, verbose=False):
-    docs = load_documents(slug)
+def build_index(tenant_id, slug, verbose=False):
+    """Rebuild a tenant's index from their documents in the database."""
+    docs = db.get_documents(tenant_id)
     if not docs:
-        # No documents yet (fresh workspace) — clear any stale index.
+        # No documents (new or emptied workspace) — clear any stale index.
         for path in (index_path(slug), chunks_path(slug)):
             if os.path.exists(path):
                 os.remove(path)
         return 0
 
-    chunks = []  # list of {"text": str, "source": filename}
-    for filename, text in docs:
-        for chunk in chunk_text(text):
-            chunks.append({"text": chunk, "source": filename})
+    chunks = []  # {"text": str, "source": filename}
+    for doc in docs:
+        for chunk in chunk_text(doc["content"]):
+            chunks.append({"text": chunk, "source": doc["filename"]})
 
-    model = _get_model()
-    embeddings = model.encode([c["text"] for c in chunks], show_progress_bar=verbose)
+    if not chunks:
+        return 0
+
+    embeddings = _get_model().encode([c["text"] for c in chunks],
+                                     show_progress_bar=verbose)
     embeddings = np.array(embeddings, dtype="float32")
 
     # normalize so inner-product search behaves like cosine similarity
@@ -139,7 +124,9 @@ def build_index(slug, verbose=False):
 
 if __name__ == "__main__":
     db.init_db()
-    if len(sys.argv) > 1:
-        build_index(sys.argv[1], verbose=True)
-    else:
+    if len(sys.argv) < 2:
         raise SystemExit("Usage: python ingest.py <workspace-slug>")
+    tenant = db.get_tenant_by_slug(sys.argv[1])
+    if not tenant:
+        raise SystemExit(f"No workspace found with slug {sys.argv[1]!r}")
+    build_index(tenant["id"], tenant["slug"], verbose=True)

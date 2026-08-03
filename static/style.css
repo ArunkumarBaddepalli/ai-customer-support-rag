@@ -57,6 +57,16 @@ header .logo {
 
 header .logo .logo-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+header .logo .logo-initial {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
 header .who { flex: 1; min-width: 0; }
 
 header h1 {

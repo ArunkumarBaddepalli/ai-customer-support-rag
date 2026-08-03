@@ -18,4 +18,8 @@ RUN python seed_demo.py
 ENV PORT=7860
 EXPOSE 7860
 
-CMD ["python", "app.py"]
+# A real WSGI server, not Flask's development server.
+# One worker: each would load its own copy of the embedding model, and the
+# instance doesn't have the memory for two. Threads handle concurrency instead,
+# which suits this workload since requests are spent waiting on the LLM API.
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 app:app

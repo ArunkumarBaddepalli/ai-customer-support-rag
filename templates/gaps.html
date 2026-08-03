@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Unanswered — {{ tenant.company_name }}{% endblock %}
+
+{% block content %}
+{% with active = 'gaps' %}{% include "_dash_nav.html" %}{% endwith %}
+
+<div class="card">
+  <h2>Questions your bot couldn't answer</h2>
+  <p class="hint">
+    Customer conversations aren't stored. Only questions your documents couldn't
+    answer are listed here — each one is something worth adding, and the most
+    asked are at the top.
+  </p>
+
+  {% if rows %}
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Question</th>
+            <th class="num">Asked</th>
+            <th>Last asked</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr class="{{ 'done' if row.resolved }}">
+              <td>{{ row.question }}</td>
+              <td class="num"><span class="count">{{ row.times_asked }}×</span></td>
+              <td class="dim">{{ row.last_asked[:10] }}</td>
+              <td class="right">
+                {% if row.resolved %}
+                  <span class="dim">Done</span>
+                {% else %}
+                  <form method="post" action="{{ url_for('resolve_gap', row_id=row.id) }}">
+                    <button class="link-quiet" type="submit">Mark done</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="hint">
+      Added the answer to a document? Mark it done to clear it from this list.
+      If a customer asks again, it comes back.
+    </p>
+  {% else %}
+    <div class="empty-box">
+      <strong>Nothing unanswered yet.</strong>
+      <p class="hint">
+        {% if show_resolved %}
+          No questions have been logged for this workspace.
+        {% else %}
+          Every question so far was answered from your documents. Anything the bot
+          can't answer will show up here.
+        {% endif %}
+      </p>
+    </div>
+  {% endif %}
+
+  <p class="hint">
+    {% if show_resolved %}
+      <a href="{{ url_for('gaps') }}">Hide the ones marked done</a>
+    {% else %}
+      <a href="{{ url_for('gaps_resolved') }}">Show the ones marked done</a>
+    {% endif %}
+  </p>
+</div>
+{% endblock %}

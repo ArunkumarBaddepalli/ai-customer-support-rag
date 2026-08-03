@@ -4,9 +4,6 @@
     python seed_demo.py
 """
 
-import os
-import shutil
-
 from security import hash_password
 
 import db
@@ -35,17 +32,16 @@ def seed():
     db.update_tenant(
         tenant["id"],
         company_tagline="Ask me anything about our menu, timings, delivery, or returns.",
-        logo_emoji="🍕",
         brand_color="#2563eb",
-        support_contact="+91-98765-43210 or support@pizzapalace.example",
+        support_phone="+91 98765 43210",
+        support_email="support@pizzapalace.example",
         onboarded=1,
     )
 
-    target = os.path.join(ingest.docs_dir(DEMO_SLUG), "faq.txt")
-    if not os.path.exists(target):
-        shutil.copyfile(SAMPLE_FAQ, target)
+    with open(SAMPLE_FAQ, encoding="utf-8") as f:
+        db.save_document(tenant["id"], "faq.txt", f.read())
 
-    chunks = ingest.build_index(DEMO_SLUG, verbose=True)
+    chunks = ingest.build_index(tenant["id"], DEMO_SLUG, verbose=True)
 
     print(f"\nDemo workspace ready ({chunks} chunks).")
     print(f"  Chat page : /c/{DEMO_SLUG}")

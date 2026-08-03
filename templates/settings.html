@@ -11,14 +11,14 @@
   <h2>How your bot looks</h2>
   <form method="post" enctype="multipart/form-data">
     <label>Business name</label>
-    <input type="text" name="company_name" value="{{ tenant.company_name }}" required>
+    <input type="text" name="company_name" value="{{ tenant.company_name }}" required maxlength="100">
 
     <label>Tagline</label>
     <input type="text" name="company_tagline" value="{{ tenant.company_tagline }}">
 
     <label>Logo</label>
     <div class="logo-picker">
-      <div class="logo-preview" id="logo-preview">
+      <div class="logo-preview" id="logo-preview" style="--brand:{{ tenant.brand_color }}">
         {% include "_logo.html" %}
       </div>
       <div class="logo-actions">
@@ -28,29 +28,37 @@
                  id="logo-input" hidden>
         </label>
         <span class="hint">PNG, JPG, GIF or WebP · up to 1 MB · square works best</span>
-        {% if tenant.logo_path %}
+        {% if tenant.logo_bytes %}
           <label class="remove-logo">
-            <input type="checkbox" name="remove_logo" value="1"> Remove logo and use the emoji instead
+            <input type="checkbox" name="remove_logo" value="1"> Remove image
           </label>
+        {% else %}
+          <span class="hint">No image set — your initial is shown instead.</span>
         {% endif %}
       </div>
     </div>
 
+    <label>Brand colour</label>
+    <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
+
+    <h2>Support contact</h2>
+    <p class="hint">
+      When the bot can't answer something, it gives the customer these details so
+      they can reach a person. Leave blank and it just says it doesn't know.
+    </p>
+
     <div class="row-2">
       <div>
-        <label>Logo emoji <span class="hint-inline">(used when no image is set)</span></label>
-        <input type="text" name="logo_emoji" value="{{ tenant.logo_emoji }}" maxlength="4">
+        <label>Phone</label>
+        <input type="tel" name="support_phone" value="{{ tenant.support_phone }}"
+               placeholder="+1 555 0100">
       </div>
       <div>
-        <label>Brand colour</label>
-        <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
+        <label>Email</label>
+        <input type="email" name="support_email" value="{{ tenant.support_email }}"
+               placeholder="support@yourcompany.com">
       </div>
     </div>
-
-    <label>Support contact</label>
-    <input type="text" name="support_contact" value="{{ tenant.support_contact }}"
-           placeholder="+1-555-0100 or support@yourcompany.com">
-    <span class="hint">Shown whenever the bot can't answer a question.</span>
 
     <button type="submit">Save settings</button>
   </form>

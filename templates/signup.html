@@ -11,7 +11,7 @@
   <form method="post">
     <label>Business name</label>
     <input type="text" name="company_name" value="{{ form.company_name }}"
-           placeholder="e.g. Pizza Palace" required autofocus>
+           placeholder="e.g. Pizza Palace" required autofocus maxlength="100">
 
     <label>Work email</label>
     <input type="email" name="email" value="{{ form.email }}" required>
