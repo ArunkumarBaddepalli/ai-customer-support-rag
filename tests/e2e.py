@@ -449,51 +449,67 @@ if resend_owner:
 # a weapon: anyone could lock out a real user just by guessing wrong on
 # purpose). Verifies both the per-account and per-IP layers independently.
 print("\n11. LOGIN THROTTLE")
-with _db.connection() as _cur:
-    _cur.execute("DELETE FROM login_attempts")
 
+
+def _clear_attempts(where=""):
+    with _db.connection() as _cur:
+        _cur.execute("DELETE FROM login_attempts" + where)
+
+
+def _timed_login(email, password="wrong"):
+    t0 = time.time()
+    code, _, loc = Client().post("/login", {"email": email, "password": password})
+    return time.time() - t0, code, loc
+
+
+# Every threshold below is measured against this baseline rather than a fixed
+# number of seconds. An un-throttled login is only instant when the database is
+# local; against a remote one the same request legitimately costs a few hundred
+# milliseconds per round trip, and hardcoded limits then fail on latency instead
+# of on behaviour.
+_clear_attempts()
+BASELINE, _, _ = _timed_login("baseline-probe@nowhere.dev")
+SLACK = 1.0  # smaller than the 2s the first real backoff step adds
+print(f"  (un-throttled login costs {BASELINE:.2f}s here; "
+      f"allowing {BASELINE + SLACK:.2f}s before calling it a delay)")
+
+_clear_attempts()
 t0 = time.time()
 for _ in range(3):
     Client().post("/login", {"email": "throttle-test@nowhere.dev", "password": "wrong"})
 first_three_elapsed = time.time() - t0
-check("throttle", "first 3 failures are not delayed", first_three_elapsed < 1.5,
-      f"took {first_three_elapsed:.1f}s")
+budget = 3 * BASELINE + SLACK
+check("throttle", "first 3 failures are not delayed", first_three_elapsed < budget,
+      f"took {first_three_elapsed:.1f}s, expected under {budget:.1f}s")
 
-t0 = time.time()
-Client().post("/login", {"email": "throttle-test@nowhere.dev", "password": "wrong"})
-fourth_elapsed = time.time() - t0
-t0 = time.time()
-Client().post("/login", {"email": "throttle-test@nowhere.dev", "password": "wrong"})
-fifth_elapsed = time.time() - t0
+fourth_elapsed, _, _ = _timed_login("throttle-test@nowhere.dev")
+fifth_elapsed, _, _ = _timed_login("throttle-test@nowhere.dev")
 check("throttle", "backoff increases with repeated failures",
-      fifth_elapsed > fourth_elapsed, f"4th={fourth_elapsed:.1f}s 5th={fifth_elapsed:.1f}s")
+      fifth_elapsed > fourth_elapsed + SLACK,
+      f"4th={fourth_elapsed:.1f}s 5th={fifth_elapsed:.1f}s")
 
 # Isolate the email-layer specifically: every local test client shares one
 # real IP (127.0.0.1), so the failures just recorded above also built up the
 # IP counter. Clearing it here tests email-based isolation on its own — the
 # IP layer's cross-account effect is verified separately below, deliberately.
-with _db.connection() as _cur:
-    _cur.execute("DELETE FROM login_attempts WHERE key LIKE 'ip:%'")
+_clear_attempts(" WHERE key LIKE 'ip:%'")
 
-t0 = time.time()
-code, _, loc = Client().post("/login", {"email": "demo@pizzapalace.example", "password": "demo12345"})
+elapsed, code, loc = _timed_login("demo@pizzapalace.example", "demo12345")
 check("throttle", "an unrelated account is unaffected by another account's failures",
-      time.time() - t0 < 1.5 and code == 302, f"status={code}")
+      elapsed < BASELINE + SLACK and code == 302, f"status={code} took {elapsed:.1f}s")
 
-with _db.connection() as _cur:
-    _cur.execute("DELETE FROM login_attempts WHERE key LIKE 'ip:%'")
+_clear_attempts(" WHERE key LIKE 'ip:%'")
 
 spray_emails = [f"spray-{i}-{SUFFIX}@nowhere.dev" for i in range(5)]
 for e in spray_emails:
     Client().post("/login", {"email": e, "password": "guess"})
-t0 = time.time()
-Client().post("/login", {"email": f"spray-new-{SUFFIX}@nowhere.dev", "password": "guess"})
-spray_elapsed = time.time() - t0
+spray_elapsed, _, _ = _timed_login(f"spray-new-{SUFFIX}@nowhere.dev", "guess")
 check("throttle", "spraying many distinct emails from one IP still gets throttled",
-      spray_elapsed > 1, f"6th distinct email took {spray_elapsed:.1f}s")
+      spray_elapsed > BASELINE + SLACK,
+      f"6th distinct email took {spray_elapsed:.1f}s, "
+      f"expected over {BASELINE + SLACK:.1f}s")
 
-with _db.connection() as _cur:
-    _cur.execute("DELETE FROM login_attempts")
+_clear_attempts()
 
 print("\n12. SECURITY")
 a = Client()

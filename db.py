@@ -88,7 +88,13 @@ class Cursor:
 
     def execute(self, sql, params=()):
         if USE_POSTGRES:
-            sql = sql.replace("?", "%s")
+            # psycopg reads % as the start of a placeholder, so a literal one —
+            # a LIKE pattern, say — has to be doubled. Escape first, then
+            # introduce the real placeholders: doing it the other way round
+            # would mangle the %s just written. Without this, SQL containing
+            # LIKE works on SQLite and fails only on Postgres, i.e. only in
+            # production.
+            sql = sql.replace("%", "%%").replace("?", "%s")
         self._raw.execute(sql, tuple(params))
         return self
 
