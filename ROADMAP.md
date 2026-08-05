@@ -125,3 +125,15 @@ than eyeballed, and it has already caught one "improvement" that wasn't.
 - **login_attempts table has no pruning** — old throttle rows accumulate forever.
   Harmless at small scale (one row per email/IP that's ever failed a login), but
   worth a periodic cleanup before real traffic.
+- **Domain for outbound email** — Resend's shared sender can only reach the
+  account owner's own inbox; a verified domain is what lifts that, not a code
+  change. eu.org request submitted (contact handle `AK4161` validated), pending
+  their manual approval — can take days to weeks and may be rejected. Faster
+  fallback if needed: GitHub Student Pack free `.me`/`.dev`, or a ~$1-3/yr `.xyz`.
+  Once a domain exists: Resend → Domains → add it → DNS records into
+  Cloudflare → set `RESEND_FROM` on Render. No app code changes needed.
+- **Neon has leftover test data** — signups from this session's testing
+  (`postfix-a2e3d3@probe.test`, `live-3768d1@probe.test`, `neon-test-843fdf`,
+  and the `acme-books`/`zen-spa` pairs from E2E runs) are still in the
+  production database alongside the real pizza-palace demo. Harmless, but
+  worth deleting before treating the DB as real production data.
