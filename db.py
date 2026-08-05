@@ -59,6 +59,15 @@ def _connect():
             # Be explicit rather than inheriting whatever the server defaults
             # to: a SQL_ASCII database hands back bytes instead of str.
             kwargs={"client_encoding": "UTF8"},
+            # Neon (and similar serverless Postgres) suspends its compute
+            # after a few minutes idle, silently dropping every open
+            # connection. Without this, the pool hands out one of those dead
+            # connections and the request dies with "AdminShutdown" or "the
+            # connection is lost". check_connection pings with SELECT 1 before
+            # handing a connection out and transparently reconnects if it's
+            # gone, so a request after idle time costs one extra round trip
+            # instead of a 500.
+            check=ConnectionPool.check_connection,
         )
         # The pool runs background threads that cannot be joined once the
         # interpreter starts finalising, so close it explicitly on the way out.
