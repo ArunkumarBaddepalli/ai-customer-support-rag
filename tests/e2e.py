@@ -357,10 +357,6 @@ check("isolation", "gap lists are separate", "laptops" not in html.lower())
 print("\n10. PASSWORD RESET + EMAIL VERIFICATION")
 import db as _db
 
-# check the unread verification banner shows for a fresh, unverified account
-code, html, _ = s.get("/dashboard")
-check("auth", "unverified banner shown", "Verify your email" in html)
-
 owner = _db.get_user_by_email(EMAIL)
 check("auth", "new account starts unverified", owner["email_verified"] == 0)
 
@@ -377,9 +373,6 @@ if vrow:
     check("auth", "email_verified flips to true", owner["email_verified"] == 1)
     code, html, _ = Client().get(f"/verify-email/{vrow['token']}")
     check("auth", "verification link is single-use", "Link expired" in html)
-
-code, html, _ = s.get("/dashboard")
-check("auth", "banner gone once verified", "Verify your email" not in html)
 
 # password reset
 code, html, _ = Client().post("/forgot-password", {"email": "nobody-here@nowhere.test"})

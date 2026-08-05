@@ -23,12 +23,6 @@
     </header>
   {% endblock %}
 
-  {% if user and not user.email_verified %}
-    <div class="verify-banner">
-      <span>Verify your email address to secure your account.</span>
-    </div>
-  {% endif %}
-
   <main class="{% block main_class %}wrap{% endblock %}">
     {% block content %}{% endblock %}
   </main>
