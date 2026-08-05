@@ -3,7 +3,22 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Install the CPU-only build of torch before anything else can pull torch in.
+# PyPI's default Linux wheel is the CUDA build, which drags in ~2.4 GB of NVIDIA
+# libraries (cudnn, cublas, cufft, nccl ...). None of it can execute on a CPU
+# instance, but the image still has to be pulled on every cold start, and on
+# free hosting that pull was taking minutes. CPU wheel: 183 MB vs 2477 MB.
+# Separate index-url, so only torch comes from here and everything else in
+# requirements.txt still resolves against PyPI.
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch
+
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -c "import torch; assert '+cpu' in torch.__version__, \
+       f'expected the CPU build, got {torch.__version__}'; \
+       print('torch', torch.__version__)"
 
 COPY . .
 
