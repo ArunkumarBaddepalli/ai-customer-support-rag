@@ -126,7 +126,7 @@ to the console so local development and the tests need no mail account at all.
 ├── rag.py             # embed → search tenant's index → ask LLM → answer + sources
 ├── ingest.py          # per-tenant chunking and FAISS index building
 ├── eval.py            # 41-case answer-quality suite
-├── tests/e2e.py       # 131-check end-to-end suite
+├── tests/e2e.py       # 134-check end-to-end suite
 ├── seed_demo.py       # creates the Pizza Palace demo workspace
 ├── sample_docs/       # demo FAQ + example FAQs you can upload
 ├── data/<slug>/       # each tenant's FAISS index (rebuildable, gitignored)
@@ -236,7 +236,7 @@ from the database.
 
 Two suites, testing different things.
 
-**`tests/e2e.py` — 131 checks across every user perspective.** Start the app, then:
+**`tests/e2e.py` — 134 checks across every user perspective.** Start the app, then:
 
 ```bash
 python tests/e2e.py

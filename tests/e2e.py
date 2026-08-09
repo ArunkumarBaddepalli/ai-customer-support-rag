@@ -729,6 +729,23 @@ check("reliability", "and the index is rebuilt exactly once", len(_builds) == 1,
 
 check("reliability", "the LLM client has a timeout", _rag.LLM_TIMEOUT_SECONDS > 0)
 
+
+class _FakeRateLimit(Exception):
+    """A 429 shaped like the SDK's, for checking we read Retry-After."""
+
+    def __init__(self, retry_after):
+        super().__init__("Error code: 429 - rate_limit_exceeded")
+        self.response = type("R", (), {"headers": {"retry-after": retry_after}})()
+
+
+check("reliability", "Retry-After is honoured when the server sends it",
+      _rag._retry_after_seconds(_FakeRateLimit("2")) == 2.0)
+check("reliability", "a huge Retry-After is capped, not obeyed",
+      _rag._retry_after_seconds(_FakeRateLimit("600")) == _rag.MAX_RETRY_WAIT_SECONDS)
+check("reliability", "a missing or junk Retry-After falls back to backoff",
+      _rag._retry_after_seconds(_FakeRateLimit(None)) is None
+      and _rag._retry_after_seconds(Exception("boom")) is None)
+
 _code, _body, _ = Client().get("/healthz")
 _health = json.loads(_body) if _body.strip().startswith("{") else {}
 check("reliability", "/healthz answers 200 when healthy", _code == 200, f"got {_code}")

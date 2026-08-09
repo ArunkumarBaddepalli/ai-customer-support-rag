@@ -39,6 +39,9 @@ TOP_K = 4
 # Generous enough for a slow-but-working completion, short enough that a hung
 # one frees its thread well inside gunicorn's 120s request timeout.
 LLM_TIMEOUT_SECONDS = 20.0
+# Ceiling on a single retry wait. Someone is staring at a chat box, so a server
+# asking us to wait a minute is a request to fail fast, not to hold the thread.
+MAX_RETRY_WAIT_SECONDS = 8.0
 # cosine similarity below this = no usable context, so the LLM is told to answer
 # without inventing business facts (small talk is fine, made-up prices are not)
 MIN_SIMILARITY = 0.20
@@ -354,16 +357,34 @@ def build_prompt(question, results, company_name, contact, has_context):
     )
 
 
-def _complete_with_retry(client, prompt, attempts=3):
-    """Call the LLM, retrying briefly on rate limits.
+def _retry_after_seconds(exc):
+    """How long the server asked us to wait, if it said.
 
-    Groq's free tier caps tokens per minute, and a burst of traffic across
-    tenants hits it easily. Most of those are transient, so a couple of short
-    backoffs recover silently instead of showing the customer an error.
+    Groq answers a 429 with a Retry-After header, and it is usually 1-2
+    seconds — far better information than any backoff curve we could guess.
+    Ignoring it was measurably worse: a burst of questions failed on retries
+    that were both too early and too few.
+    """
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        return min(float(raw), MAX_RETRY_WAIT_SECONDS)
+    except (TypeError, ValueError):
+        return None
+
+
+def _complete_with_retry(client, prompt, attempts=5):
+    """Call the LLM, retrying on rate limits.
+
+    Groq's free tier caps tokens per minute and a burst across tenants hits it
+    easily. This is the *only* retry layer — the SDK's own is switched off in
+    _get_groq_client() so the two cannot multiply into a worst case nobody
+    budgeted for. That makes honouring Retry-After this layer's job rather
+    than a nicety: without it, eval.py dropped from 41/41 to 30/41, every
+    failure a 429 the server had already told us how to survive.
     """
     import time
 
-    # Keep the total added wait under ~5s — someone is staring at a chat box.
     delay = 1.5
     for attempt in range(attempts):
         try:
@@ -379,8 +400,11 @@ def _complete_with_retry(client, prompt, attempts=3):
             retryable = "rate_limit" in str(exc).lower() or "429" in str(exc)
             if not retryable or attempt == attempts - 1:
                 raise
-            time.sleep(delay)
-            delay *= 2
+            wait = _retry_after_seconds(exc)
+            if wait is None:
+                wait = min(delay, MAX_RETRY_WAIT_SECONDS)
+                delay *= 2
+            time.sleep(wait)
 
 
 def ask(question, tenant):

@@ -26,7 +26,7 @@ reasoning behind each decision isn't lost.
 | Chat rate limiting — per-IP and per-tenant, before any LLM call | ✅ |
 | Session cookie flags, security headers, fail-loud `SECRET_KEY` | ✅ |
 | Multi-file document upload, validated as an atomic batch | ✅ |
-| Test suite — 41 eval cases + 131 end-to-end checks | ✅ |
+| Test suite — 41 eval cases + 134 end-to-end checks | ✅ |
 | Index cache — per-tenant build lock, LRU bound, version-based invalidation | ✅ |
 | LLM timeout, table pruning, `/healthz` | ✅ |
 | CI on every push and pull request | ✅ |
