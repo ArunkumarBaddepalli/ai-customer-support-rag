@@ -20,9 +20,13 @@ reasoning behind each decision isn't lost.
 | Behaviour routing — small talk, abuse, off-topic, unknown | ✅ |
 | Multi-tenant isolation — data, files and access, verified by test | ✅ |
 | Postgres storage — signups, documents and logos survive redeploys | ✅ |
-| Email verification + password reset via Resend | ✅ |
-| Progressive login throttle (per-account + per-IP, no lockout) | ✅ |
-| Test suite — 41 eval cases + 96 end-to-end checks | ✅ |
+| Email verification + password reset, delivering to any address via Brevo | ✅ |
+| Progressive login throttle (per-account + per-IP, rejects rather than sleeps) | ✅ |
+| CSRF tokens on every state-changing form | ✅ |
+| Chat rate limiting — per-IP and per-tenant, before any LLM call | ✅ |
+| Session cookie flags, security headers, fail-loud `SECRET_KEY` | ✅ |
+| Multi-file document upload, validated as an atomic batch | ✅ |
+| Test suite — 41 eval cases + 115 end-to-end checks | ✅ |
 
 ---
 
@@ -113,27 +117,37 @@ than eyeballed, and it has already caught one "improvement" that wasn't.
 
 ## Also worth doing
 
-- **CSRF tokens** on state-changing forms (settings, document upload/delete,
-  password change). `SESSION_COOKIE_SAMESITE=Lax` blocks the classic cross-site
-  auto-submit vector in modern browsers, but that's not the same as real CSRF
-  protection. Not done — touches every form in the app, wanted explicit sign-off
-  before taking it on.
 - **Conversation memory** — each message is currently handled independently, so
   follow-ups ("how much?" after "do you have Margherita?") don't resolve.
-- **Background indexing** — re-indexing happens in-process on upload, which won't
-  hold up at real document volumes.
-- **login_attempts table has no pruning** — old throttle rows accumulate forever.
-  Harmless at small scale (one row per email/IP that's ever failed a login), but
-  worth a periodic cleanup before real traffic.
-- **Domain for outbound email** — Resend's shared sender can only reach the
-  account owner's own inbox; a verified domain is what lifts that, not a code
-  change. eu.org request submitted (contact handle `AK4161` validated), pending
-  their manual approval — can take days to weeks and may be rejected. Faster
-  fallback if needed: GitHub Student Pack free `.me`/`.dev`, or a ~$1-3/yr `.xyz`.
-  Once a domain exists: Resend → Domains → add it → DNS records into
-  Cloudflare → set `RESEND_FROM` on Render. No app code changes needed.
-- **Neon has leftover test data** — signups from this session's testing
+- **Index cache is single-worker** — `rag._indexes` has no lock and never
+  evicts. Correct for one gunicorn worker; two would race on a cold rebuild,
+  and the cache grows without bound as tenants accumulate. Needs a per-tenant
+  build lock, an LRU bound, and an index version on the tenant row so
+  invalidation doesn't depend on which process handled the upload.
+- **No timeout on the LLM client** — a hung call holds a thread until
+  gunicorn's 120s.
+- **Background indexing** — re-indexing happens in-process on upload and
+  re-embeds the whole corpus, not just what changed. Won't hold up at real
+  document volumes.
+- **No pruning** on `tokens`, `login_attempts` or `rate_limits` — rows
+  accumulate forever. Harmless at small scale, worth a periodic cleanup before
+  real traffic.
+- **Verification gates nothing** — addresses are confirmed and the dashboard
+  says so, but no route checks the flag. The right gate is the *public bot*,
+  not the dashboard: locking an owner out of their own workspace over an email
+  they may never receive is worse than the problem it solves.
+- **No CI** — both suites are run by hand, which is how a test asserting
+  against a path from an old machine survived for weeks, silently failing and
+  taking a path-traversal assertion down with it.
+- **Unpinned dependencies** — builds aren't reproducible; a minor release can
+  change behaviour between two deploys of identical source.
+- **`print()` instead of logging** — no levels, no timestamps, no request
+  correlation.
+- **Neon has leftover test data** — signups from earlier testing
   (`postfix-a2e3d3@probe.test`, `live-3768d1@probe.test`, `neon-test-843fdf`,
   and the `acme-books`/`zen-spa` pairs from E2E runs) are still in the
   production database alongside the real pizza-palace demo. Harmless, but
   worth deleting before treating the DB as real production data.
+
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full audit these
+came from, including the reasoning and the order to take them in.
