@@ -61,12 +61,18 @@
     <textarea name="text" rows="10"
       placeholder="Timings:&#10;We are open 11am to 11pm every day.&#10;&#10;Delivery:&#10;Free over $30, otherwise $4."></textarea>
 
-    <div class="divider">— or upload a .txt file —</div>
-    <input type="file" name="file" accept=".txt">
+    <div class="divider">— or upload one or more .txt files —</div>
+    <input type="file" name="file" accept=".txt" multiple
+           data-staged="staged-files">
+    <p class="hint">Pick several at once, or add them one at a time — each pick is
+      added to the list below. You can also drag files onto this form.</p>
+    <ul class="staged-list" id="staged-files" hidden></ul>
 
     <button type="submit">Finish setup</button>
   </form>
 </div>
+
+<script src="{{ url_for('static', filename='upload.js') }}"></script>
 
 <script>
   const logoInput = document.getElementById("logo-input");

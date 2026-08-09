@@ -13,12 +13,17 @@
       That link is invalid or has already been used.
       {% if purpose == "reset" %}
         Request a new one below.
+      {% elif user %}
+        Use the <b>Resend the email</b> button on your dashboard to get a fresh link.
       {% else %}
-        You can ask for a new one from your dashboard.
+        Log in and use the <b>Resend the email</b> button on your dashboard to get
+        a fresh link.
       {% endif %}
     </p>
     {% if purpose == "reset" %}
       <p><a href="{{ url_for('forgot_password') }}">Request a new reset link</a></p>
+    {% elif user %}
+      <p><a href="{{ url_for('dashboard') }}">Go to dashboard</a></p>
     {% else %}
       <p><a href="{{ url_for('login') }}">Log in</a></p>
     {% endif %}

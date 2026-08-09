@@ -38,10 +38,16 @@
     <label>Text</label>
     <textarea name="text" rows="9" placeholder="Paste the FAQ or policy text here..."></textarea>
 
-    <div class="divider">— or upload a .txt file —</div>
-    <input type="file" name="file" accept=".txt">
+    <div class="divider">— or upload one or more .txt files —</div>
+    <input type="file" name="file" accept=".txt" multiple
+           data-staged="staged-files">
+    <p class="hint">Pick several at once, or add them one at a time — each pick is
+      added to the list below. You can also drag files onto this form.</p>
+    <ul class="staged-list" id="staged-files" hidden></ul>
 
     <button type="submit">Save and re-index</button>
   </form>
 </div>
+
+<script src="{{ url_for('static', filename='upload.js') }}"></script>
 {% endblock %}

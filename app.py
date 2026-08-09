@@ -20,6 +20,7 @@ import os
 import re
 import time
 from functools import wraps
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -204,13 +205,50 @@ def verify_email(token):
     return render_template("token_result.html", status=status, purpose="verify")
 
 
+def _back_with(back, **params):
+    """Return `back` with these query params *replaced*, not appended.
+
+    Appending is the obvious version and it is wrong: the second click's
+    Referer is already `/dashboard?verify=sent`, so appending produces
+    `?verify=sent&verify=wait` and request.args.get() reads the first one.
+    The banner then claims an email was sent when the cooldown blocked it —
+    worse than the silent button this feature replaced.
+    """
+    parts = urlsplit(back)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k not in params]
+    query += list(params.items())
+    return urlunsplit(("", "", parts.path, urlencode(query), parts.fragment))
+
+
+def _safe_back(default_endpoint="dashboard"):
+    """Where to return after a POST, taken from the Referer header.
+
+    Only a same-site *path* is accepted. request.referrer is set by the
+    browser but is not trustworthy input — echoing it into a redirect is how
+    an open redirect gets built, and an open redirect on a logged-in route is
+    a phishing primitive ("you were on our site a moment ago").
+    """
+    back = request.referrer or ""
+    if back.startswith("/") and not back.startswith("//"):
+        return back
+    return url_for(default_endpoint)
+
+
 @app.route("/resend-verification", methods=["POST"])
 @login_required
 def resend_verification():
     user = current_user()
-    if not user["email_verified"] and not db.recently_sent(user["id"], "verify"):
+    back = _safe_back()
+    if user["email_verified"]:
+        return redirect(back)
+    # The cooldown is a spam-reputation guard, not a security control — a
+    # button that fires a fresh email on every click is how a sending address
+    # gets flagged. Say so rather than silently doing nothing, which reads as
+    # a broken button.
+    outcome = "wait" if db.recently_sent(user["id"], "verify") else "sent"
+    if outcome == "sent":
         _send_verification_email(user["id"], user["email"])
-    return redirect(request.referrer or url_for("dashboard"))
+    return redirect(_back_with(back, verify=outcome))
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
@@ -285,11 +323,11 @@ def onboarding(tenant):
             _handle_logo_fields(tenant)
 
             text = (request.form.get("text") or "").strip()
-            upload = request.files.get("file")
-            if (upload and upload.filename) or text:
-                _save_document(
+            uploads = [f for f in request.files.getlist("file") if f and f.filename]
+            if uploads or text:
+                _save_documents(
                     tenant,
-                    upload=upload,
+                    uploads=uploads,
                     title=(request.form.get("title") or "faq").strip(),
                     text=text,
                 )
@@ -313,13 +351,14 @@ def dashboard(tenant):
 
     if request.method == "POST":
         try:
-            filename = _save_document(
+            saved = _save_documents(
                 tenant,
-                upload=request.files.get("file"),
+                uploads=request.files.getlist("file"),
                 title=(request.form.get("title") or "").strip(),
                 text=(request.form.get("text") or "").strip(),
             )
-            message = f"Saved '{filename}' and rebuilt the search index."
+            names = ", ".join(f"'{n}'" for n in saved)
+            message = f"Saved {names} and rebuilt the search index."
         except ValueError as exc:
             error = str(exc)
 
@@ -606,33 +645,52 @@ def _handle_logo_fields(tenant):
     db.save_logo(tenant["id"], data, MIME_TYPES[ext])
 
 
-def _save_document(tenant, upload, title, text):
-    """Store a .txt document in the database and rebuild the tenant's index."""
-    if upload and upload.filename:
-        filename = secure_filename(upload.filename)
-        if not filename.endswith(".txt"):
-            raise ValueError("Only .txt files are supported.")
-        try:
-            content = upload.read().decode("utf-8")
-        except UnicodeDecodeError:
-            raise ValueError("That file isn't readable as UTF-8 text.")
+def _read_upload(upload):
+    """Validate one uploaded file and return (filename, content)."""
+    filename = secure_filename(upload.filename)
+    if not filename.endswith(".txt"):
+        raise ValueError(f"Only .txt files are supported — '{upload.filename}' isn't one.")
+    try:
+        content = upload.read().decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"'{filename}' isn't readable as UTF-8 text.")
+    return filename, content
+
+
+def _save_documents(tenant, uploads, title, text):
+    """Store one or more .txt documents, then rebuild the tenant's index once.
+
+    Every file is validated and read *before* anything is written, so one bad
+    file in a multi-file selection fails the whole submission rather than
+    leaving half the batch saved and the other half rejected.
+    """
+    uploads = [f for f in (uploads or []) if f and f.filename]
+
+    if uploads:
+        pending = [_read_upload(f) for f in uploads]
     elif title and text:
         filename = secure_filename(title)
         if not filename.endswith(".txt"):
             filename += ".txt"
-        content = text
+        pending = [(filename, text)]
     else:
         raise ValueError("Provide either a .txt file or a title and some text.")
 
-    if not filename or filename == ".txt":
-        raise ValueError("Give the document a valid name.")
-    if not content.strip():
-        raise ValueError("The document is empty.")
+    for filename, content in pending:
+        if not filename or filename == ".txt":
+            raise ValueError("Give the document a valid name.")
+        if not content.strip():
+            raise ValueError(f"'{filename}' is empty.")
 
-    db.save_document(tenant["id"], filename, content)
+    for filename, content in pending:
+        db.save_document(tenant["id"], filename, content)
+
+    # One rebuild for the whole batch. The index is derived from *every*
+    # document the tenant has, so rebuilding per file would repeat the same
+    # work N times and leave the index briefly stale in between.
     ingest.build_index(tenant["id"], tenant["slug"])
     rag.reload_index(tenant["slug"])
-    return filename
+    return [filename for filename, _ in pending]
 
 
 @app.errorhandler(404)
