@@ -57,7 +57,25 @@ class Client:
     def get(self, path):
         return self._send(urllib.request.Request(BASE + path))
 
-    def post(self, path, fields=None, files=None, json_body=None):
+    def csrf(self):
+        """Fetch this session's CSRF token from the meta tag base.html emits.
+
+        Re-fetched per POST rather than cached: logging in calls session.clear(),
+        which rotates the token on purpose (a token minted before you signed in
+        must not stay valid afterwards). A cached one would go stale exactly
+        once per persona and fail in a way that looks like an app bug.
+        """
+        for probe in ("/dashboard", "/login", "/"):
+            code, html, _ = self.get(probe)
+            m = re.search(r'name="csrf-token" content="([^"]+)"', html)
+            if code == 200 and m:
+                return m.group(1)
+        raise AssertionError("could not obtain a CSRF token from any page")
+
+    def post(self, path, fields=None, files=None, json_body=None, csrf=True):
+        if csrf and json_body is None:
+            fields = dict(fields or {})
+            fields.setdefault("csrf_token", self.csrf())
         if json_body is not None:
             req = urllib.request.Request(
                 BASE + path, json.dumps(json_body).encode(),
@@ -554,7 +572,51 @@ _db.clear_rate_limits()
 code, data = ask(SLUG_A, "what are your opening hours?")
 check("ratelimit", "clearing the counter restores service", code == 200, f"got {code}")
 
-print("\n13. SECURITY")
+print("\n13. CSRF")
+# SESSION_COOKIE_SAMESITE="Lax" blocks the classic cross-site auto-submitted
+# form in a current browser, but that is a browser behaviour, not a control
+# this app enforces. These check the app's own guard.
+csrf_client = Client()
+csrf_client.post("/login", {"email": EMAIL2, "password": "password123"})
+
+code, html, _ = csrf_client.post("/dashboard/settings",
+                                 {"company_name": "CSRF Probe"}, csrf=False)
+check("csrf", "a form POST with no token is rejected", code == 400, f"got {code}")
+check("csrf", "and says nothing was changed", "Nothing was changed" in html, html[:200])
+_, html, _ = csrf_client.get("/dashboard/settings")
+check("csrf", "the rejected change really did not apply", "CSRF Probe" not in html)
+
+code, _, _ = csrf_client.post("/dashboard/settings",
+                              {"company_name": "Zen Spa", "csrf_token": "wrong-token"},
+                              csrf=False)
+check("csrf", "a wrong token is rejected too", code == 400, f"got {code}")
+
+code, html, _ = csrf_client.post("/dashboard/settings",
+                                 {"company_name": "Zen Spa", "support_phone": "",
+                                  "support_email": "hello@zenspa.test",
+                                  "brand_color": "#0ea5e9"})
+check("csrf", "the real form still works", "Settings saved" in html, html[:200])
+
+# One session's token must not authorise another's request, or the check is
+# only proving that *a* token was present.
+other = Client()
+other.post("/login", {"email": EMAIL, "password": "newpassword9"})
+code, _, _ = csrf_client.post("/dashboard/settings",
+                              {"company_name": "Stolen", "csrf_token": other.csrf()},
+                              csrf=False)
+check("csrf", "another session's token does not work", code == 400, f"got {code}")
+
+# The public chat API is exempt on purpose: no cookie auth, nothing to ride on.
+code, data = ask(SLUG_A, "what are your opening hours?")
+check("csrf", "the chat API stays exempt", code == 200, f"got {code}")
+
+check("csrf", "every form in the app carries a token", all(
+    open(f"templates/{t}").read().count("<form") ==
+    open(f"templates/{t}").read().count('name="csrf_token"')
+    for t in os.listdir("templates")
+    if t.endswith(".html") and t != "chat.html"), "a form is missing its token")
+
+print("\n14. SECURITY")
 a = Client()
 a.post("/login", {"email": EMAIL2, "password": "password123"})
 code, _, _ = a.post("/dashboard/documents/..%2F..%2Fsample_docs%2Ffaq.txt/delete")

@@ -38,7 +38,9 @@ import db
 import ingest
 import mailer
 import rag
-from security import hash_password, verify_password
+from security import (
+    CSRF_FIELD, csrf_ok, hash_password, issue_csrf_token, verify_password,
+)
 
 app = Flask(__name__)
 
@@ -140,7 +142,28 @@ def with_tenant(view):
 
 @app.context_processor
 def inject_user():
-    return {"user": current_user()}
+    return {"user": current_user(), "csrf_token": issue_csrf_token(session)}
+
+
+# Routes that authenticate per-request rather than by session cookie, so there
+# is no ambient credential for another site to ride on. The public chat API is
+# the only one: it is unauthenticated by design, and requiring a token there
+# would break the embed widget on the roadmap for no security gain.
+CSRF_EXEMPT_PREFIXES = ("/api/",)
+
+
+@app.before_request
+def _require_csrf():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    if request.path.startswith(CSRF_EXEMPT_PREFIXES):
+        return None
+    if csrf_ok(session, request.form.get(CSRF_FIELD)):
+        return None
+    # 400, not 403: the request is malformed as far as this app is concerned,
+    # and a distinct code makes the failure obvious in logs rather than looking
+    # like a permissions problem.
+    return render_template("csrf_error.html"), 400
 
 
 # ------------------------------------------------------------ public site

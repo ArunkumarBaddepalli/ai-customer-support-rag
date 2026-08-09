@@ -12,6 +12,7 @@
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
   <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <h2>1. How your bot looks</h2>
 
     <label>Business name</label>

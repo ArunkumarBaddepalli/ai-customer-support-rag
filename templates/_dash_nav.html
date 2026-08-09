@@ -23,6 +23,7 @@
       <span><b>{{ user.email }}</b> isn't confirmed yet. Confirm it so password
         resets can reach you.</span>
       <form method="post" action="{{ url_for('resend_verification') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit">Resend the email</button>
       </form>
     {% endif %}

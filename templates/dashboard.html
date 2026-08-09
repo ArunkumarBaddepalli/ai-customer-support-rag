@@ -16,6 +16,7 @@
           <span>{{ doc }}</span>
           <form method="post" action="{{ url_for('delete_document', name=doc) }}"
                 onsubmit="return confirm('Delete {{ doc }}? The bot will stop using it.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="link-danger" type="submit">Delete</button>
           </form>
         </li>
@@ -32,6 +33,7 @@
   <p class="hint">Saving rebuilds the search index straight away — no restart needed.</p>
 
   <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Title</label>
     <input type="text" name="title" placeholder="e.g. delivery-policy">
 

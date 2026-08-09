@@ -10,6 +10,7 @@
 
   <h2>How your bot looks</h2>
   <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Business name</label>
     <input type="text" name="company_name" value="{{ tenant.company_name }}" required maxlength="100">
 
