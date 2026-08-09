@@ -449,60 +449,68 @@ def _clear_attempts(where=""):
         _cur.execute("DELETE FROM login_attempts" + where)
 
 
-def _timed_login(email, password="wrong"):
-    t0 = time.time()
-    code, _, loc = Client().post("/login", {"email": email, "password": password})
-    return time.time() - t0, code, loc
+def _login(email, password="wrong"):
+    """Returns (status, body). A throttled attempt answers 429 immediately.
+
+    These checks used to measure elapsed *time*, because the throttle slept
+    through its backoff inside the request. It no longer does — sleeping held
+    a server thread, so four wrong passwords at once froze the whole app — and
+    asserting on a status code is both faster and not sensitive to how far
+    away the database happens to be.
+    """
+    code, html, _ = Client().post("/login", {"email": email, "password": password})
+    return code, html
 
 
-# Every threshold below is measured against this baseline rather than a fixed
-# number of seconds. An un-throttled login is only instant when the database is
-# local; against a remote one the same request legitimately costs a few hundred
-# milliseconds per round trip, and hardcoded limits then fail on latency instead
-# of on behaviour.
+# _backoff_seconds() returns 0 while fail_count <= 3, and each attempt reads
+# the count *before* recording its own failure. So attempts 1-4 all get through
+# and the 5th is the first to be refused.
 _clear_attempts()
-BASELINE, _, _ = _timed_login("baseline-probe@nowhere.dev")
-SLACK = 1.0  # smaller than the 2s the first real backoff step adds
-print(f"  (un-throttled login costs {BASELINE:.2f}s here; "
-      f"allowing {BASELINE + SLACK:.2f}s before calling it a delay)")
+for n in range(4):
+    code, _ = _login("throttle-test@nowhere.dev")
+    check("throttle", f"failure {n + 1} is not throttled", code == 200, f"got {code}")
 
-_clear_attempts()
-t0 = time.time()
-for _ in range(3):
-    Client().post("/login", {"email": "throttle-test@nowhere.dev", "password": "wrong"})
-first_three_elapsed = time.time() - t0
-budget = 3 * BASELINE + SLACK
-check("throttle", "first 3 failures are not delayed", first_three_elapsed < budget,
-      f"took {first_three_elapsed:.1f}s, expected under {budget:.1f}s")
+code, html = _login("throttle-test@nowhere.dev")
+check("throttle", "the 5th failure is refused, not delayed", code == 429, f"got {code}")
+check("throttle", "the refusal says how long to wait", "Wait about" in html, html[:160])
 
-fourth_elapsed, _, _ = _timed_login("throttle-test@nowhere.dev")
-fifth_elapsed, _, _ = _timed_login("throttle-test@nowhere.dev")
-check("throttle", "backoff increases with repeated failures",
-      fifth_elapsed > fourth_elapsed + SLACK,
-      f"4th={fourth_elapsed:.1f}s 5th={fifth_elapsed:.1f}s")
+check("throttle", "a throttled attempt never reveals whether the account exists",
+      "Wrong email or password" not in html)
 
-# Isolate the email-layer specifically: every local test client shares one
-# real IP (127.0.0.1), so the failures just recorded above also built up the
-# IP counter. Clearing it here tests email-based isolation on its own — the
-# IP layer's cross-account effect is verified separately below, deliberately.
+# Isolate the email layer: every local test client shares one real IP
+# (127.0.0.1), so the failures above also built up the IP counter. Clearing it
+# here tests email-based isolation on its own — the IP layer's cross-account
+# effect is verified separately below, deliberately.
 _clear_attempts(" WHERE key LIKE 'ip:%'")
 
-elapsed, code, loc = _timed_login("demo@pizzapalace.example", "demo12345")
+code, _, loc = Client().post("/login",
+                             {"email": "demo@pizzapalace.example", "password": "demo12345"})
 check("throttle", "an unrelated account is unaffected by another account's failures",
-      elapsed < BASELINE + SLACK and code == 302, f"status={code} took {elapsed:.1f}s")
+      code == 302, f"got {code}")
 
 _clear_attempts(" WHERE key LIKE 'ip:%'")
 
-spray_emails = [f"spray-{i}-{SUFFIX}@nowhere.dev" for i in range(5)]
-for e in spray_emails:
-    Client().post("/login", {"email": e, "password": "guess"})
-spray_elapsed, _, _ = _timed_login(f"spray-new-{SUFFIX}@nowhere.dev", "guess")
-check("throttle", "spraying many distinct emails from one IP still gets throttled",
-      spray_elapsed > BASELINE + SLACK,
-      f"6th distinct email took {spray_elapsed:.1f}s, "
-      f"expected over {BASELINE + SLACK:.1f}s")
+for i in range(4):
+    Client().post("/login", {"email": f"spray-{i}-{SUFFIX}@nowhere.dev", "password": "guess"})
+code, _ = _login(f"spray-new-{SUFFIX}@nowhere.dev", "guess")
+check("throttle", "spraying distinct emails from one IP still gets throttled",
+      code == 429, f"5th distinct email got {code}, expected 429")
+
+# A correct password after being throttled must still be refused — otherwise
+# the throttle is only an inconvenience to someone guessing, not a control.
+_clear_attempts()
+for _ in range(4):
+    Client().post("/login", {"email": "demo@pizzapalace.example", "password": "wrong"})
+code, _, loc = Client().post("/login",
+                             {"email": "demo@pizzapalace.example", "password": "demo12345"})
+check("throttle", "even the right password is refused while throttled", code == 429,
+      f"got {code} {loc}")
 
 _clear_attempts()
+code, _, loc = Client().post("/login",
+                             {"email": "demo@pizzapalace.example", "password": "demo12345"})
+check("throttle", "clearing the counter lets the right password back in", code == 302,
+      f"got {code}")
 
 print("\n12. SECURITY")
 a = Client()

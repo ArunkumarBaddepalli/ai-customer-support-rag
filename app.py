@@ -202,13 +202,30 @@ def login():
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password") or ""
 
-        # Progressive delay per account and per source IP — see the note on
+        # Progressive backoff per account and per source IP — see the note on
         # login_attempts in db.py for why this throttles rather than locks.
         email_key = f"email:{email.lower()}"
         ip_key = f"ip:{request.remote_addr or 'unknown'}"
         delay = max(db.get_login_delay(email_key), db.get_login_delay(ip_key))
         if delay:
-            time.sleep(delay)
+            # Refuse immediately rather than sleeping through the backoff.
+            # Sleeping spends the delay *inside the request*, holding a server
+            # thread: production runs 4 threads and the backoff caps at 20s, so
+            # four deliberately-wrong passwords parked every thread and the
+            # whole app — every dashboard, every tenant's bot — stopped
+            # answering. An attacker needed four sockets and no credentials.
+            # Rejecting keeps the schedule and the pressure identical while
+            # costing the server nothing.
+            db.record_login_failure(email_key)
+            db.record_login_failure(ip_key)
+            # Rounded up to 5s so the number is not a precise oracle for how
+            # many failures someone else has racked up against this address.
+            wait = max(5, -(-delay // 5) * 5)
+            return render_template(
+                "login.html",
+                error=f"Too many attempts. Wait about {wait} seconds and try again.",
+                email=email,
+            ), 429
 
         user = db.get_user_by_email(email)
 
