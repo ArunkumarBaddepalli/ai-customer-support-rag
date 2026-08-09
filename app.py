@@ -19,6 +19,7 @@ a URL parameter, so a signed-in user can only ever touch their own workspace.
 import os
 import re
 import time
+from datetime import timedelta
 from functools import wraps
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -40,9 +41,57 @@ import rag
 from security import hash_password, verify_password
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB upload cap
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# "Production" is taken to mean a real database is configured. That is the one
+# signal available at import time that distinguishes a deploy from someone
+# running `python app.py`, and it is the same switch the storage layer uses.
+IS_PRODUCTION = bool(os.environ.get("DATABASE_URL", "").strip())
+
+# SECRET_KEY signs the session cookie. Falling back to a random key looks
+# harmless and is not: every restart silently signs out every user, and with
+# more than one worker each process generates a *different* key, so logins
+# start failing depending on which worker answers. Refusing to boot is far
+# easier to diagnose than that. Locally a random key is fine — losing a dev
+# session on restart costs nothing.
+_secret = os.environ.get("SECRET_KEY", "").strip()
+if not _secret:
+    if IS_PRODUCTION:
+        raise RuntimeError(
+            "SECRET_KEY is not set. Sessions cannot be signed reliably without "
+            "it — set it to a long random string before deploying.")
+    _secret = os.urandom(24)
+app.secret_key = _secret
+
+app.config.update(
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,     # 2 MB upload cap
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,           # JavaScript must not read the session
+    # Secure is gated on production rather than hardcoded: with it always on,
+    # local development over http://localhost could never log in at all.
+    SESSION_COOKIE_SECURE=IS_PRODUCTION,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14),
+)
+
+
+@app.after_request
+def _security_headers(response):
+    """Headers a browser needs to be told, since it assumes the worst otherwise.
+
+    setdefault throughout, so a view that deliberately sets its own value
+    (the logo route, a future embed widget) keeps it.
+    """
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # A tenant's public chat page is the one thing that legitimately gets
+    # framed later (the embed widget on the roadmap). Everything else — the
+    # dashboard above all — must never be, or a transparent iframe over an
+    # attacker's page turns a stray click into a settings change.
+    framing = "SAMEORIGIN" if request.path.startswith("/c/") else "DENY"
+    response.headers.setdefault("X-Frame-Options", framing)
+    if IS_PRODUCTION:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 # Render (and any host behind a reverse proxy) terminates TLS at the edge and
 # forwards plain HTTP to the container. Without this, Flask has no way to know
