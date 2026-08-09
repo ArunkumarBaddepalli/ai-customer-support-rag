@@ -16,6 +16,7 @@ Exits non-zero if any check fails.
 
 import http.cookiejar
 import json
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import sys
@@ -512,7 +513,48 @@ code, _, loc = Client().post("/login",
 check("throttle", "clearing the counter lets the right password back in", code == 302,
       f"got {code}")
 
-print("\n12. SECURITY")
+print("\n12. CHAT RATE LIMIT")
+# The public chat endpoint is unauthenticated and every call costs an LLM
+# completion on a key shared by every tenant, so a loop against one known slug
+# would drain the quota for all of them. Driven through db directly rather than
+# by sending 60 real questions — that would be a minute of LLM calls to prove a
+# counter, and the counter is the thing under test.
+_db.clear_rate_limits()
+
+IP_LIMIT, IP_WINDOW = 60, 60
+probe = f"chat-ip:probe-{SUFFIX}"
+allowed = sum(0 if _db.rate_limit_exceeded(probe, IP_LIMIT, IP_WINDOW) else 1
+              for _ in range(IP_LIMIT + 10))
+check("ratelimit", "allows exactly the limit, then refuses", allowed == IP_LIMIT,
+      f"allowed {allowed}, expected {IP_LIMIT}")
+
+check("ratelimit", "a different source is unaffected",
+      not _db.rate_limit_exceeded(f"chat-ip:other-{SUFFIX}", IP_LIMIT, IP_WINDOW))
+
+# Window rollover: rewind this key's window past its length and it starts fresh.
+with _db.connection() as _cur:
+    _cur.execute("UPDATE rate_limits SET window_start = ? WHERE key = ?",
+                 ((datetime.now(timezone.utc) - timedelta(seconds=IP_WINDOW + 5)).isoformat(),
+                  probe))
+check("ratelimit", "the window rolls over and allows again",
+      not _db.rate_limit_exceeded(probe, IP_LIMIT, IP_WINDOW))
+
+# And the endpoint itself actually refuses once the counter is spent.
+_db.clear_rate_limits()
+with _db.connection() as _cur:
+    _cur.execute("INSERT INTO rate_limits (key, window_start, hits) VALUES (?, ?, ?)",
+                 (f"chat-tenant:{_db.get_tenant_by_slug(SLUG_A)['id']}",
+                  datetime.now(timezone.utc).isoformat(), 99999))
+code, data = ask(SLUG_A, "what are your opening hours?")
+check("ratelimit", "the endpoint refuses with 429, not 500", code == 429, f"got {code}")
+check("ratelimit", "and says so in a way a widget can show",
+      "busy" in (data.get("error") or "").lower(), str(data)[:120])
+
+_db.clear_rate_limits()
+code, data = ask(SLUG_A, "what are your opening hours?")
+check("ratelimit", "clearing the counter restores service", code == 200, f"got {code}")
+
+print("\n13. SECURITY")
 a = Client()
 a.post("/login", {"email": EMAIL2, "password": "password123"})
 code, _, _ = a.post("/dashboard/documents/..%2F..%2Fsample_docs%2Ffaq.txt/delete")

@@ -559,11 +559,31 @@ def tenant_logo(slug):
                     headers={"Cache-Control": "public, max-age=300"})
 
 
+# Chat rate limits. Deliberately generous — a real customer types a handful of
+# questions, so these only bite on automated abuse. The per-IP limit stops one
+# source hammering; the per-tenant limit caps the damage one popular (or
+# targeted) bot can do to the shared LLM quota that every other tenant needs.
+CHAT_LIMIT_PER_IP = (60, 60)          # 60 questions per minute from one address
+CHAT_LIMIT_PER_TENANT = (1000, 3600)  # 1000 questions per hour for one workspace
+
+
 @app.route("/api/c/<slug>/chat", methods=["POST"])
 def chat_api(slug):
     tenant = db.get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
+
+    # Checked before any work is done, and before the LLM is touched at all —
+    # the whole point is that a refused request costs nothing.
+    limit, window = CHAT_LIMIT_PER_IP
+    if db.rate_limit_exceeded(f"chat-ip:{request.remote_addr or 'unknown'}", limit, window):
+        return jsonify({"error": "Too many questions — please slow down and try "
+                                 "again in a minute."}), 429
+
+    limit, window = CHAT_LIMIT_PER_TENANT
+    if db.rate_limit_exceeded(f"chat-tenant:{tenant['id']}", limit, window):
+        return jsonify({"error": "This assistant is unusually busy right now — "
+                                 "please try again shortly."}), 429
 
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
