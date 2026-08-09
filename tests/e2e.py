@@ -35,6 +35,26 @@ BASE = "http://127.0.0.1:5001"
 results = []
 
 
+# Read .env the same way app.py does. Without this the key sits in .env, the
+# app happily uses it, and the suite silently decides there is no LLM and skips
+# a third of its coverage — passing while testing less.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             ".env"))
+except ImportError:
+    pass
+
+# Answer-quality checks need a real LLM. Without a key the bot still responds —
+# with the "can't answer right now" fallback — so those checks would fail on a
+# working app. They are skipped instead, and counted, because a suite that
+# quietly drops coverage reads as "everything passed" when it did not.
+LLM = bool(os.environ.get("GROQ_API_KEY", "").strip())
+
+skipped = []
+
+
 def check(section, name, condition, detail=""):
     results.append((section, name, bool(condition), detail))
     mark = "PASS" if condition else "FAIL"
@@ -42,6 +62,11 @@ def check(section, name, condition, detail=""):
     if not condition and detail:
         line += f"\n         -> {detail}"
     print(line, flush=True)
+
+
+def skip(section, name, why="needs GROQ_API_KEY"):
+    skipped.append((section, name, why))
+    print(f"  [SKIP] {name}  ({why})", flush=True)
 
 
 class Client:
@@ -235,43 +260,51 @@ code, html, _ = s.get("/dashboard")
 check("dashboard", "second document listed", "gift-cards.txt" in html)
 
 print("\n5. CUSTOMER — chatting with Acme Books")
-time.sleep(1)
-cases = [
-    ("what time do you close", ["7pm", "7 pm", "19:00"], True, "answers from docs"),
-    ("how much is delivery", ["3", "three"], True, "answers price"),
-    ("how much are gift cards", ["10", "25", "50"], True, "uses the new document"),
-    ("hi", ["help", "hi", "hello"], False, "greets"),
-]
-for q, expect, want_source, label in cases:
-    code, data = ask(SLUG_A, q)
-    ans = data.get("answer", "").lower()
-    hit = any(e.lower() in ans for e in expect)
-    check("customer", f"{label}: {q!r}", code == 200 and hit, data.get("answer", "")[:120])
-    if want_source:
-        check("customer", f"cites a source for {q!r}", data.get("sources"), str(data.get("sources")))
-    time.sleep(1.5)
+if not LLM:
+    for _name in ("answers from docs", "answers price", "uses the new document",
+                  "greets", "cites sources", "refuses what docs don't cover",
+                  "no bogus citation on refusal", "off-topic stays in scope",
+                  "escalates to a real person", "stays calm under abuse",
+                  "isolation: neither bot answers the other's question"):
+        skip("customer", _name)
+else:
+  time.sleep(1)
+  cases = [
+      ("what time do you close", ["7pm", "7 pm", "19:00"], True, "answers from docs"),
+      ("how much is delivery", ["3", "three"], True, "answers price"),
+      ("how much are gift cards", ["10", "25", "50"], True, "uses the new document"),
+      ("hi", ["help", "hi", "hello"], False, "greets"),
+  ]
+  for q, expect, want_source, label in cases:
+      code, data = ask(SLUG_A, q)
+      ans = data.get("answer", "").lower()
+      hit = any(e.lower() in ans for e in expect)
+      check("customer", f"{label}: {q!r}", code == 200 and hit, data.get("answer", "")[:120])
+      if want_source:
+          check("customer", f"cites a source for {q!r}", data.get("sources"), str(data.get("sources")))
+      time.sleep(1.5)
 
-code, data = ask(SLUG_A, "do you sell laptops")
-ans = data.get("answer", "").lower()
-check("customer", "refuses what docs don't cover",
-      "acme" in ans or "don't" in ans or "not" in ans, data.get("answer", ""))
-check("customer", "no bogus citation on refusal", not data.get("sources"), str(data.get("sources")))
-time.sleep(1.5)
+  code, data = ask(SLUG_A, "do you sell laptops")
+  ans = data.get("answer", "").lower()
+  check("customer", "refuses what docs don't cover",
+        "acme" in ans or "don't" in ans or "not" in ans, data.get("answer", ""))
+  check("customer", "no bogus citation on refusal", not data.get("sources"), str(data.get("sources")))
+  time.sleep(1.5)
 
-code, data = ask(SLUG_A, "what is the capital of France")
-check("customer", "off-topic: does not leak world knowledge",
-      "paris" not in data.get("answer", "").lower(), data.get("answer", ""))
-time.sleep(1.5)
+  code, data = ask(SLUG_A, "what is the capital of France")
+  check("customer", "off-topic: does not leak world knowledge",
+        "paris" not in data.get("answer", "").lower(), data.get("answer", ""))
+  time.sleep(1.5)
 
-code, data = ask(SLUG_A, "I want to talk to a human")
-ans = data.get("answer", "")
-check("customer", "escalates to a real person",
-      "7946" in ans or "help@acmebooks.test" in ans, ans)
-time.sleep(1.5)
+  code, data = ask(SLUG_A, "I want to talk to a human")
+  ans = data.get("answer", "")
+  check("customer", "escalates to a real person",
+        "7946" in ans or "help@acmebooks.test" in ans, ans)
+  time.sleep(1.5)
 
-code, data = ask(SLUG_A, "you are useless")
-ans = data.get("answer", "").lower()
-check("customer", "stays calm under abuse", "hello" not in ans[:8], data.get("answer", ""))
+  code, data = ask(SLUG_A, "you are useless")
+  ans = data.get("answer", "").lower()
+  check("customer", "stays calm under abuse", "hello" not in ans[:8], data.get("answer", ""))
 
 print("\n6. EDGE CASES")
 code, data = ask(SLUG_A, "")
@@ -326,16 +359,25 @@ check("profile", "new password works", code == 302, f"got {code}")
 
 print("\n8. UNANSWERED LIST")
 code, html, _ = s.get("/dashboard/gaps")
-check("gaps", "logs the real gap", "laptops" in html.lower(), "expected 'do you sell laptops'")
-check("gaps", "does not log greetings", ">hi<" not in html)
-check("gaps", "does not log off-topic trivia", "capital of France" not in html)
-
-m = re.search(r"/dashboard/gaps/(\d+)/resolve", html)
-if m:
-    code, _, _ = s.post(f"/dashboard/gaps/{m.group(1)}/resolve")
-    check("gaps", "mark done works", code == 302, f"got {code}")
+check("gaps", "the page loads for the owner", code == 200, f"got {code}")
+if not LLM:
+    # Which questions land here is decided by the LLM's own classification, so
+    # with no key there is nothing to assert about the contents.
+    for _name in ("logs the real gap", "does not log greetings",
+                  "does not log off-topic trivia", "mark done works"):
+        skip("gaps", _name)
 else:
-    check("gaps", "mark done works", False, "no resolve button found")
+    check("gaps", "logs the real gap", "laptops" in html.lower(),
+          "expected 'do you sell laptops'")
+    check("gaps", "does not log greetings", ">hi<" not in html)
+    check("gaps", "does not log off-topic trivia", "capital of France" not in html)
+
+    m = re.search(r"/dashboard/gaps/(\d+)/resolve", html)
+    if m:
+        code, _, _ = s.post(f"/dashboard/gaps/{m.group(1)}/resolve")
+        check("gaps", "mark done works", code == 302, f"got {code}")
+    else:
+        check("gaps", "mark done works", False, "no resolve button found")
 
 print("\n9. SECOND BUSINESS — isolation")
 b = Client()
@@ -360,15 +402,19 @@ code, html, _ = s.get("/dashboard")
 check("isolation", "first owner unaffected",
       "Acme Books" in html and "Zen Spa" not in html)
 
-time.sleep(1)
-code, data = ask(SLUG_B, "how much are gift cards")
-check("isolation", "spa bot cannot see bookshop docs",
-      "10" not in data.get("answer", "") or not data.get("sources"),
-      data.get("answer", ""))
-time.sleep(1.5)
-code, data = ask(SLUG_A, "how much is a massage")
-check("isolation", "bookshop bot cannot see spa docs",
-      "70" not in data.get("answer", ""), data.get("answer", ""))
+if not LLM:
+    skip("isolation", "spa bot cannot see bookshop docs")
+    skip("isolation", "bookshop bot cannot see spa docs")
+else:
+    time.sleep(1)
+    code, data = ask(SLUG_B, "how much are gift cards")
+    check("isolation", "spa bot cannot see bookshop docs",
+          "10" not in data.get("answer", "") or not data.get("sources"),
+          data.get("answer", ""))
+    time.sleep(1.5)
+    code, data = ask(SLUG_A, "how much is a massage")
+    check("isolation", "bookshop bot cannot see spa docs",
+          "70" not in data.get("answer", ""), data.get("answer", ""))
 
 code, html, _ = b.get("/dashboard/gaps")
 check("isolation", "gap lists are separate", "laptops" not in html.lower())
@@ -683,6 +729,14 @@ check("reliability", "and the index is rebuilt exactly once", len(_builds) == 1,
 
 check("reliability", "the LLM client has a timeout", _rag.LLM_TIMEOUT_SECONDS > 0)
 
+_code, _body, _ = Client().get("/healthz")
+_health = json.loads(_body) if _body.strip().startswith("{") else {}
+check("reliability", "/healthz answers 200 when healthy", _code == 200, f"got {_code}")
+check("reliability", "/healthz actually checks the database",
+      _health.get("database") == "up", str(_health))
+check("reliability", "/healthz names the storage backend and mail provider",
+      _health.get("backend") in ("sqlite", "postgres") and "mail" in _health, str(_health))
+
 # Pruning: dead rows go, live ones stay.
 _u = _db.get_user_by_email("demo@pizzapalace.example")
 _live = _db.create_token(_u["id"], "reset")
@@ -765,6 +819,10 @@ total_p = sum(1 for *_, ok, _ in [(r[0], r[1], r[2], r[3]) for r in results] if 
 total_f = len(results) - total_p
 print("=" * 62)
 print(f"TOTAL: {total_p} passed, {total_f} failed, {len(results)} checks")
+if skipped:
+    print(f"\n{len(skipped)} checks SKIPPED — coverage below what a full run gives:")
+    for section, name, why in skipped:
+        print(f"  [{section}] {name} ({why})")
 if total_f:
     print("\nFailures:")
     for section, name, ok, detail in results:  # noqa
@@ -772,4 +830,4 @@ if total_f:
             print(f"  [{section}] {name}")
             if detail:
                 print(f"      {detail[:200]}")
-sys.exit(1 if total_f else 0)
+sys.exit(1 if total_f else 0)   # skips are reported, not failed

@@ -26,7 +26,11 @@ reasoning behind each decision isn't lost.
 | Chat rate limiting — per-IP and per-tenant, before any LLM call | ✅ |
 | Session cookie flags, security headers, fail-loud `SECRET_KEY` | ✅ |
 | Multi-file document upload, validated as an atomic batch | ✅ |
-| Test suite — 41 eval cases + 115 end-to-end checks | ✅ |
+| Test suite — 41 eval cases + 131 end-to-end checks | ✅ |
+| Index cache — per-tenant build lock, LRU bound, version-based invalidation | ✅ |
+| LLM timeout, table pruning, `/healthz` | ✅ |
+| CI on every push and pull request | ✅ |
+| Pinned dependencies | ✅ |
 
 ---
 
@@ -119,30 +123,20 @@ than eyeballed, and it has already caught one "improvement" that wasn't.
 
 - **Conversation memory** — each message is currently handled independently, so
   follow-ups ("how much?" after "do you have Margherita?") don't resolve.
-- **Index cache is single-worker** — `rag._indexes` has no lock and never
-  evicts. Correct for one gunicorn worker; two would race on a cold rebuild,
-  and the cache grows without bound as tenants accumulate. Needs a per-tenant
-  build lock, an LRU bound, and an index version on the tenant row so
-  invalidation doesn't depend on which process handled the upload.
-- **No timeout on the LLM client** — a hung call holds a thread until
-  gunicorn's 120s.
 - **Background indexing** — re-indexing happens in-process on upload and
   re-embeds the whole corpus, not just what changed. Won't hold up at real
-  document volumes.
-- **No pruning** on `tokens`, `login_attempts` or `rate_limits` — rows
-  accumulate forever. Harmless at small scale, worth a periodic cleanup before
-  real traffic.
+  document volumes. The index cache itself is now locked, bounded and
+  version-invalidated, so this is the remaining piece.
 - **Verification gates nothing** — addresses are confirmed and the dashboard
   says so, but no route checks the flag. The right gate is the *public bot*,
   not the dashboard: locking an owner out of their own workspace over an email
   they may never receive is worse than the problem it solves.
-- **No CI** — both suites are run by hand, which is how a test asserting
-  against a path from an old machine survived for weeks, silently failing and
-  taking a path-traversal assertion down with it.
-- **Unpinned dependencies** — builds aren't reproducible; a minor release can
-  change behaviour between two deploys of identical source.
 - **`print()` instead of logging** — no levels, no timestamps, no request
   correlation.
+- **No unit tests** — `tests/e2e.py` needs a running server and writes to
+  whatever database it is pointed at. The pure functions (chunking, outcome
+  parsing, the image header parsers, slug handling) carry the most logic per
+  line and would test fastest.
 - **Neon has leftover test data** — signups from earlier testing
   (`postfix-a2e3d3@probe.test`, `live-3768d1@probe.test`, `neon-test-843fdf`,
   and the `acme-books`/`zen-spa` pairs from E2E runs) are still in the

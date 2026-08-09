@@ -1,10 +1,19 @@
-flask>=3.0
-sentence-transformers>=3.0
-faiss-cpu>=1.8.0
-python-dotenv>=1.0
-groq>=0.9
-numpy>=1.26
-gunicorn>=21.2
-psycopg[binary]>=3.1
-psycopg-pool>=3.2
-httpx>=0.27
+# Pinned exactly, so two deploys of the same source install the same code.
+# With >= ranges a minor release of sentence-transformers or psycopg could
+# change behaviour between one deploy and the next with nothing in the diff
+# to explain it. The Dockerfile already asserts torch is the +cpu build for
+# the same reason.
+#
+# torch is deliberately absent: the Dockerfile installs the CPU-only wheel
+# from PyTorch's own index first, because PyPI's default Linux wheel drags in
+# ~2.3 GB of CUDA libraries that cannot execute on a CPU instance.
+flask==3.1.3
+sentence-transformers==5.7.0
+faiss-cpu==1.15.0
+python-dotenv==1.2.2
+groq==1.6.0
+numpy==2.5.1
+gunicorn==26.0.0
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+httpx==0.28.1

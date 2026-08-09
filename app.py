@@ -196,6 +196,32 @@ def _require_csrf():
     return render_template("csrf_error.html"), 400
 
 
+@app.route("/healthz")
+def healthz():
+    """Liveness for a platform health check or an uptime monitor.
+
+    Deliberately touches the database. "/" renders a template and talks to
+    nothing, so it stays green while Postgres is unreachable — which is the
+    one failure a health check most needs to notice.
+    """
+    try:
+        with db.connection() as cur:
+            cur.execute("SELECT 1")
+        database = "up"
+    except Exception as exc:
+        print(f"[health] database unreachable: {type(exc).__name__}: {exc}")
+        database = "down"
+
+    body = {
+        "ok": database == "up",
+        "database": database,
+        "backend": "postgres" if db.USE_POSTGRES else "sqlite",
+        "mail": mailer.active_provider(),
+        "cached_indexes": len(rag._indexes),
+    }
+    return jsonify(body), (200 if body["ok"] else 503)
+
+
 # ------------------------------------------------------------ public site
 
 
