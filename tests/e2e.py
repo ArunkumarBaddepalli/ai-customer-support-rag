@@ -16,6 +16,7 @@ Exits non-zero if any check fails.
 
 import http.cookiejar
 import json
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import sys
@@ -56,7 +57,25 @@ class Client:
     def get(self, path):
         return self._send(urllib.request.Request(BASE + path))
 
-    def post(self, path, fields=None, files=None, json_body=None):
+    def csrf(self):
+        """Fetch this session's CSRF token from the meta tag base.html emits.
+
+        Re-fetched per POST rather than cached: logging in calls session.clear(),
+        which rotates the token on purpose (a token minted before you signed in
+        must not stay valid afterwards). A cached one would go stale exactly
+        once per persona and fail in a way that looks like an app bug.
+        """
+        for probe in ("/dashboard", "/login", "/"):
+            code, html, _ = self.get(probe)
+            m = re.search(r'name="csrf-token" content="([^"]+)"', html)
+            if code == 200 and m:
+                return m.group(1)
+        raise AssertionError("could not obtain a CSRF token from any page")
+
+    def post(self, path, fields=None, files=None, json_body=None, csrf=True):
+        if csrf and json_body is None:
+            fields = dict(fields or {})
+            fields.setdefault("csrf_token", self.csrf())
         if json_body is not None:
             req = urllib.request.Request(
                 BASE + path, json.dumps(json_body).encode(),
@@ -449,70 +468,167 @@ def _clear_attempts(where=""):
         _cur.execute("DELETE FROM login_attempts" + where)
 
 
-def _timed_login(email, password="wrong"):
-    t0 = time.time()
-    code, _, loc = Client().post("/login", {"email": email, "password": password})
-    return time.time() - t0, code, loc
+def _login(email, password="wrong"):
+    """Returns (status, body). A throttled attempt answers 429 immediately.
+
+    These checks used to measure elapsed *time*, because the throttle slept
+    through its backoff inside the request. It no longer does — sleeping held
+    a server thread, so four wrong passwords at once froze the whole app — and
+    asserting on a status code is both faster and not sensitive to how far
+    away the database happens to be.
+    """
+    code, html, _ = Client().post("/login", {"email": email, "password": password})
+    return code, html
 
 
-# Every threshold below is measured against this baseline rather than a fixed
-# number of seconds. An un-throttled login is only instant when the database is
-# local; against a remote one the same request legitimately costs a few hundred
-# milliseconds per round trip, and hardcoded limits then fail on latency instead
-# of on behaviour.
+# _backoff_seconds() returns 0 while fail_count <= 3, and each attempt reads
+# the count *before* recording its own failure. So attempts 1-4 all get through
+# and the 5th is the first to be refused.
 _clear_attempts()
-BASELINE, _, _ = _timed_login("baseline-probe@nowhere.dev")
-SLACK = 1.0  # smaller than the 2s the first real backoff step adds
-print(f"  (un-throttled login costs {BASELINE:.2f}s here; "
-      f"allowing {BASELINE + SLACK:.2f}s before calling it a delay)")
+for n in range(4):
+    code, _ = _login("throttle-test@nowhere.dev")
+    check("throttle", f"failure {n + 1} is not throttled", code == 200, f"got {code}")
 
-_clear_attempts()
-t0 = time.time()
-for _ in range(3):
-    Client().post("/login", {"email": "throttle-test@nowhere.dev", "password": "wrong"})
-first_three_elapsed = time.time() - t0
-budget = 3 * BASELINE + SLACK
-check("throttle", "first 3 failures are not delayed", first_three_elapsed < budget,
-      f"took {first_three_elapsed:.1f}s, expected under {budget:.1f}s")
+code, html = _login("throttle-test@nowhere.dev")
+check("throttle", "the 5th failure is refused, not delayed", code == 429, f"got {code}")
+check("throttle", "the refusal says how long to wait", "Wait about" in html, html[:160])
 
-fourth_elapsed, _, _ = _timed_login("throttle-test@nowhere.dev")
-fifth_elapsed, _, _ = _timed_login("throttle-test@nowhere.dev")
-check("throttle", "backoff increases with repeated failures",
-      fifth_elapsed > fourth_elapsed + SLACK,
-      f"4th={fourth_elapsed:.1f}s 5th={fifth_elapsed:.1f}s")
+check("throttle", "a throttled attempt never reveals whether the account exists",
+      "Wrong email or password" not in html)
 
-# Isolate the email-layer specifically: every local test client shares one
-# real IP (127.0.0.1), so the failures just recorded above also built up the
-# IP counter. Clearing it here tests email-based isolation on its own — the
-# IP layer's cross-account effect is verified separately below, deliberately.
+# Isolate the email layer: every local test client shares one real IP
+# (127.0.0.1), so the failures above also built up the IP counter. Clearing it
+# here tests email-based isolation on its own — the IP layer's cross-account
+# effect is verified separately below, deliberately.
 _clear_attempts(" WHERE key LIKE 'ip:%'")
 
-elapsed, code, loc = _timed_login("demo@pizzapalace.example", "demo12345")
+code, _, loc = Client().post("/login",
+                             {"email": "demo@pizzapalace.example", "password": "demo12345"})
 check("throttle", "an unrelated account is unaffected by another account's failures",
-      elapsed < BASELINE + SLACK and code == 302, f"status={code} took {elapsed:.1f}s")
+      code == 302, f"got {code}")
 
 _clear_attempts(" WHERE key LIKE 'ip:%'")
 
-spray_emails = [f"spray-{i}-{SUFFIX}@nowhere.dev" for i in range(5)]
-for e in spray_emails:
-    Client().post("/login", {"email": e, "password": "guess"})
-spray_elapsed, _, _ = _timed_login(f"spray-new-{SUFFIX}@nowhere.dev", "guess")
-check("throttle", "spraying many distinct emails from one IP still gets throttled",
-      spray_elapsed > BASELINE + SLACK,
-      f"6th distinct email took {spray_elapsed:.1f}s, "
-      f"expected over {BASELINE + SLACK:.1f}s")
+for i in range(4):
+    Client().post("/login", {"email": f"spray-{i}-{SUFFIX}@nowhere.dev", "password": "guess"})
+code, _ = _login(f"spray-new-{SUFFIX}@nowhere.dev", "guess")
+check("throttle", "spraying distinct emails from one IP still gets throttled",
+      code == 429, f"5th distinct email got {code}, expected 429")
+
+# A correct password after being throttled must still be refused — otherwise
+# the throttle is only an inconvenience to someone guessing, not a control.
+_clear_attempts()
+for _ in range(4):
+    Client().post("/login", {"email": "demo@pizzapalace.example", "password": "wrong"})
+code, _, loc = Client().post("/login",
+                             {"email": "demo@pizzapalace.example", "password": "demo12345"})
+check("throttle", "even the right password is refused while throttled", code == 429,
+      f"got {code} {loc}")
 
 _clear_attempts()
+code, _, loc = Client().post("/login",
+                             {"email": "demo@pizzapalace.example", "password": "demo12345"})
+check("throttle", "clearing the counter lets the right password back in", code == 302,
+      f"got {code}")
 
-print("\n12. SECURITY")
+print("\n12. CHAT RATE LIMIT")
+# The public chat endpoint is unauthenticated and every call costs an LLM
+# completion on a key shared by every tenant, so a loop against one known slug
+# would drain the quota for all of them. Driven through db directly rather than
+# by sending 60 real questions — that would be a minute of LLM calls to prove a
+# counter, and the counter is the thing under test.
+_db.clear_rate_limits()
+
+IP_LIMIT, IP_WINDOW = 60, 60
+probe = f"chat-ip:probe-{SUFFIX}"
+allowed = sum(0 if _db.rate_limit_exceeded(probe, IP_LIMIT, IP_WINDOW) else 1
+              for _ in range(IP_LIMIT + 10))
+check("ratelimit", "allows exactly the limit, then refuses", allowed == IP_LIMIT,
+      f"allowed {allowed}, expected {IP_LIMIT}")
+
+check("ratelimit", "a different source is unaffected",
+      not _db.rate_limit_exceeded(f"chat-ip:other-{SUFFIX}", IP_LIMIT, IP_WINDOW))
+
+# Window rollover: rewind this key's window past its length and it starts fresh.
+with _db.connection() as _cur:
+    _cur.execute("UPDATE rate_limits SET window_start = ? WHERE key = ?",
+                 ((datetime.now(timezone.utc) - timedelta(seconds=IP_WINDOW + 5)).isoformat(),
+                  probe))
+check("ratelimit", "the window rolls over and allows again",
+      not _db.rate_limit_exceeded(probe, IP_LIMIT, IP_WINDOW))
+
+# And the endpoint itself actually refuses once the counter is spent.
+_db.clear_rate_limits()
+with _db.connection() as _cur:
+    _cur.execute("INSERT INTO rate_limits (key, window_start, hits) VALUES (?, ?, ?)",
+                 (f"chat-tenant:{_db.get_tenant_by_slug(SLUG_A)['id']}",
+                  datetime.now(timezone.utc).isoformat(), 99999))
+code, data = ask(SLUG_A, "what are your opening hours?")
+check("ratelimit", "the endpoint refuses with 429, not 500", code == 429, f"got {code}")
+check("ratelimit", "and says so in a way a widget can show",
+      "busy" in (data.get("error") or "").lower(), str(data)[:120])
+
+_db.clear_rate_limits()
+code, data = ask(SLUG_A, "what are your opening hours?")
+check("ratelimit", "clearing the counter restores service", code == 200, f"got {code}")
+
+print("\n13. CSRF")
+# SESSION_COOKIE_SAMESITE="Lax" blocks the classic cross-site auto-submitted
+# form in a current browser, but that is a browser behaviour, not a control
+# this app enforces. These check the app's own guard.
+csrf_client = Client()
+csrf_client.post("/login", {"email": EMAIL2, "password": "password123"})
+
+code, html, _ = csrf_client.post("/dashboard/settings",
+                                 {"company_name": "CSRF Probe"}, csrf=False)
+check("csrf", "a form POST with no token is rejected", code == 400, f"got {code}")
+check("csrf", "and says nothing was changed", "Nothing was changed" in html, html[:200])
+_, html, _ = csrf_client.get("/dashboard/settings")
+check("csrf", "the rejected change really did not apply", "CSRF Probe" not in html)
+
+code, _, _ = csrf_client.post("/dashboard/settings",
+                              {"company_name": "Zen Spa", "csrf_token": "wrong-token"},
+                              csrf=False)
+check("csrf", "a wrong token is rejected too", code == 400, f"got {code}")
+
+code, html, _ = csrf_client.post("/dashboard/settings",
+                                 {"company_name": "Zen Spa", "support_phone": "",
+                                  "support_email": "hello@zenspa.test",
+                                  "brand_color": "#0ea5e9"})
+check("csrf", "the real form still works", "Settings saved" in html, html[:200])
+
+# One session's token must not authorise another's request, or the check is
+# only proving that *a* token was present.
+other = Client()
+other.post("/login", {"email": EMAIL, "password": "newpassword9"})
+code, _, _ = csrf_client.post("/dashboard/settings",
+                              {"company_name": "Stolen", "csrf_token": other.csrf()},
+                              csrf=False)
+check("csrf", "another session's token does not work", code == 400, f"got {code}")
+
+# The public chat API is exempt on purpose: no cookie auth, nothing to ride on.
+code, data = ask(SLUG_A, "what are your opening hours?")
+check("csrf", "the chat API stays exempt", code == 200, f"got {code}")
+
+check("csrf", "every form in the app carries a token", all(
+    open(f"templates/{t}").read().count("<form") ==
+    open(f"templates/{t}").read().count('name="csrf_token"')
+    for t in os.listdir("templates")
+    if t.endswith(".html") and t != "chat.html"), "a form is missing its token")
+
+print("\n14. SECURITY")
 a = Client()
 a.post("/login", {"email": EMAIL2, "password": "password123"})
 code, _, _ = a.post("/dashboard/documents/..%2F..%2Fsample_docs%2Ffaq.txt/delete")
 check("security", "path traversal on delete blocked", code in (302, 404), f"got {code}")
 
-import os
-check("security", "sample docs untouched",
-      os.path.exists("/Users/NI011/Desktop/AI Customer-Support Assistant (RAG)/sample_docs/faq.txt"))
+# Resolved from this file's own location, never hardcoded: an absolute path
+# to somebody's machine silently becomes False the moment the repository is
+# moved, and this is the assertion that proves the traversal above did not
+# actually delete anything.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAMPLE_FAQ = os.path.join(REPO_ROOT, "sample_docs", "faq.txt")
+check("security", "sample docs untouched", os.path.exists(SAMPLE_FAQ), SAMPLE_FAQ)
 
 code, html, _ = a.post("/dashboard/settings",
     fields={"company_name": "Zen Spa"},

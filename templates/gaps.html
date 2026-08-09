@@ -34,6 +34,7 @@
                   <span class="dim">Done</span>
                 {% else %}
                   <form method="post" action="{{ url_for('resolve_gap', row_id=row.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button class="link-quiet" type="submit">Mark done</button>
                   </form>
                 {% endif %}

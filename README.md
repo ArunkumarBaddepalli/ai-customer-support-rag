@@ -61,6 +61,40 @@ and neither dashboard nor unanswered list shows the other's data.
 | `/c/<slug>/logo` | public | That business's logo, served from the database |
 | `/api/c/<slug>/chat` | public | That bot's chat endpoint |
 
+## Holding up against abuse
+
+The public chat page is unauthenticated and the LLM quota is shared by every
+tenant, so a few things had to be true before this could face the internet.
+
+| Control | What it stops | Where |
+|---|---|---|
+| **CSRF tokens** on every form | Another site auto-submitting a form with your cookie attached | [security.py](security.py), `before_request` in [app.py](app.py) |
+| **Chat rate limit** — 60/min per IP, 1000/hr per tenant | A loop against one known slug draining the LLM quota every other tenant needs. Checked before any work, so a refused request costs nothing | [app.py](app.py) |
+| **Login throttle** — progressive, per-account *and* per-IP | Password guessing, without the lockout that would let anyone freeze a real user out by guessing wrong on purpose | [db.py](db.py) |
+| **Upload validation** — magic bytes, header parse, `secure_filename` | Script-as-PNG, SVG payloads, path traversal | [app.py](app.py) |
+| **Tenant resolved from the session**, never a URL parameter | There is no tenant id to tamper with | every dashboard route |
+| **Cookie flags + response headers** | Content sniffing on user-uploaded logos, the dashboard being framed, referrer leakage | [app.py](app.py) |
+
+Two of these are worth explaining, because the obvious implementation is wrong.
+
+**The throttle rejects rather than sleeps.** Spending the backoff inside the
+request holds a server thread — production runs four, the backoff caps at 20
+seconds, so four deliberately-wrong passwords parked every thread and the whole
+app stopped answering. An attacker needed four sockets and no credentials.
+Returning `429` immediately keeps the same escalation and costs the server
+nothing. Measured: with six throttled logins in flight, the public bot page
+still serves in 0.01s.
+
+**`SECRET_KEY` refuses to boot when unset in production.** Falling back to a
+random key looks harmless: it silently signs everyone out on restart, and with
+more than one worker each process signs with a *different* key, so logins fail
+depending on which worker answers. That is a bug that looks like anything except
+its cause.
+
+The chat API is deliberately exempt from CSRF — it is unauthenticated, so there
+is no ambient credential for another site to ride on, and a token there would
+break the planned embed widget for no gain.
+
 ## Tech stack
 
 | Piece | Tool |
@@ -71,23 +105,33 @@ and neither dashboard nor unanswered list shows the other's data.
 | Vector search | FAISS (one index per tenant) |
 | LLM | Groq (`llama-3.1-8b-instant`, free API) |
 | Database | Postgres in production, SQLite locally (same code) |
+| Email | Brevo, with Resend still supported — whichever key is set |
 | Frontend | HTML/CSS/vanilla JS, no framework |
+
+Email is worth a note, because the first choice was wrong. Resend's shared
+sandbox sender only delivers to the address the Resend account was created
+with — so verification and reset links reached me and silently reached nobody
+else. The feature existed and did not work. Brevo delivers to any recipient
+once a *single sender address* is verified: 300/day free, no domain, no DNS.
+`mailer.py` picks whichever provider has a key set, and falls back to logging
+to the console so local development and the tests need no mail account at all.
 
 ## Project structure
 
 ```
 ├── app.py             # routes: auth, onboarding, dashboard, public bot
 ├── db.py              # storage: Postgres or SQLite behind one interface
-├── security.py        # password hashing
+├── security.py        # password hashing and CSRF tokens
+├── mailer.py          # transactional email (Brevo or Resend)
 ├── rag.py             # embed → search tenant's index → ask LLM → answer + sources
 ├── ingest.py          # per-tenant chunking and FAISS index building
 ├── eval.py            # 41-case answer-quality suite
-├── tests/e2e.py       # 73-check end-to-end suite
+├── tests/e2e.py       # 115-check end-to-end suite
 ├── seed_demo.py       # creates the Pizza Palace demo workspace
 ├── sample_docs/       # demo FAQ + example FAQs you can upload
 ├── data/<slug>/       # each tenant's FAISS index (rebuildable, gitignored)
 ├── templates/         # landing, auth, dashboard, public chat
-└── static/            # app.css (dashboard), style.css + script.js (chat widget)
+└── static/            # app.css + upload.js (dashboard), style.css + script.js (chat)
 ```
 
 ## Running it locally
@@ -192,7 +236,7 @@ from the database.
 
 Two suites, testing different things.
 
-**`tests/e2e.py` — 71 checks across every user perspective.** Start the app, then:
+**`tests/e2e.py` — 115 checks across every user perspective.** Start the app, then:
 
 ```bash
 python tests/e2e.py
@@ -210,6 +254,9 @@ sessions behave like separate browsers. Notable checks:
 | Customer | Answers cite sources; refusals don't; escalation; abuse stays calm |
 | Isolation | Two businesses can't see each other's documents, bots, or gap lists |
 | Attacker | Path traversal, script-as-PNG, SVG, corrupt image, XSS in company name |
+| CSRF | Missing and wrong tokens both refused; one session's token can't be used by another; the refused change verifiably didn't apply |
+| Throttle | First failures pass, then 429; the right password is still refused while throttled; one account's failures don't affect another |
+| Rate limit | Allows exactly the limit then refuses; the window rolls over; a different source is unaffected |
 
 It's written with `urllib` rather than curl deliberately: shell quoting silently
 mangled test values more than once and produced failures that looked like
@@ -259,6 +306,9 @@ behaviour instead of one hard threshold.
 - **No conversation memory.** Each message is handled independently, so follow-ups
   ("how much?" after "do you have Margherita?") don't resolve. This is the next thing
   I'd build.
-- **No email verification or password reset** — signup trusts the address given.
+- **Email verification is a nudge, not a gate.** Addresses are confirmed and the
+  dashboard says so, but nothing is withheld until they are.
 - **One workspace per account**, and indexes are rebuilt in-process on upload, which
   would need a background worker at real document volumes.
+- **The index cache is single-worker.** It has no lock and never evicts, which is
+  fine for one gunicorn worker and would not be for two.

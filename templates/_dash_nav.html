@@ -8,6 +8,28 @@
   </div>
 </div>
 
+{# Unverified accounts get one line and a resend button. Shown on every
+   dashboard page rather than just one, because the address that needs
+   confirming is the one every password-reset link would go to. #}
+{% if user and not user.email_verified %}
+  {% set verify = request.args.get('verify') %}
+  <div class="hint warning verify-banner">
+    {% if verify == 'sent' %}
+      <span>Verification email sent to <b>{{ user.email }}</b> — check your inbox.</span>
+    {% elif verify == 'wait' %}
+      <span>One was just sent to <b>{{ user.email }}</b>. Check your inbox, or
+        try again in a minute.</span>
+    {% else %}
+      <span><b>{{ user.email }}</b> isn't confirmed yet. Confirm it so password
+        resets can reach you.</span>
+      <form method="post" action="{{ url_for('resend_verification') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">Resend the email</button>
+      </form>
+    {% endif %}
+  </div>
+{% endif %}
+
 <nav class="tabs">
   <a href="{{ url_for('dashboard') }}" class="{{ 'on' if active == 'documents' }}">Documents</a>
   <a href="{{ url_for('settings') }}" class="{{ 'on' if active == 'settings' }}">Settings</a>

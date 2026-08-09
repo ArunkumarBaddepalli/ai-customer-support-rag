@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Request expired — SupportBot{% endblock %}
+
+{% block content %}
+<div class="card narrow centered">
+  <h1>That request expired</h1>
+  <p class="hint">
+    The page you submitted from had been open a while, or the form was sent
+    from somewhere else. Nothing was changed. Open the page again and retry.
+  </p>
+  <p><a href="{{ url_for('dashboard') if user else url_for('home') }}">
+    {{ "Back to your dashboard" if user else "Back to the start" }}</a></p>
+</div>
+{% endblock %}

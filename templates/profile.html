@@ -10,6 +10,7 @@
 
   <h2>Email</h2>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="form_type" value="email">
     <label>Email address</label>
     <input type="email" name="email" value="{{ account.email }}" required>
@@ -18,6 +19,7 @@
 
   <h2>Password</h2>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="form_type" value="password">
 
     <label>Current password</label>

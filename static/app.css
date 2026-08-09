@@ -945,3 +945,72 @@ tr.done .count { background: #f1f2f4; color: var(--muted); }
   .wrap { padding: 24px 16px 52px; }
   .row-2 { grid-template-columns: 1fr; }
 }
+
+/* --------------------------------------------------- staged file uploads */
+/* The list of files chosen but not yet submitted. A native file input shows
+   only its most recent selection, so this is what tells the user what will
+   actually be sent — see static/upload.js. */
+
+.staged-list { list-style: none; padding: 0; margin: 10px 0 4px; }
+
+.staged-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  background: var(--soft);
+}
+
+.staged-list li.rejected {
+  background: #fdf0f0;
+  border-color: #f8cfcc;
+}
+
+.staged-left { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+
+.staged-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged-meta { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+.staged-list li.rejected .staged-meta { color: #b3251f; font-weight: 600; }
+
+form.dragging { outline: 2px dashed var(--accent); outline-offset: 6px; }
+
+/* --------------------------------------------- email-verification banner */
+/* Sits above the dashboard tabs. One line plus a button, deliberately not a
+   modal — it is a nudge, not a blocker. */
+
+.verify-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+  font-size: 13px;
+}
+
+.verify-banner form { margin: 0; }
+
+.verify-banner button {
+  margin: 0;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  background: #8a5a10;
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.verify-banner button:hover { background: #6f480d; }

@@ -240,6 +240,13 @@ def init_db():
                 last_attempt_at TEXT NOT NULL
             )
         """)
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                key TEXT PRIMARY KEY,
+                window_start TEXT NOT NULL,
+                hits INTEGER NOT NULL DEFAULT 0
+            )
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_docs_tenant ON documents(tenant_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_unanswered_tenant ON unanswered(tenant_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id)")
@@ -424,6 +431,65 @@ def clear_login_failures(key):
     account/source isn't the thing that needed throttling."""
     with connection() as cur:
         cur.execute("DELETE FROM login_attempts WHERE key = ?", (key,))
+
+
+# ------------------------------------------------------------ rate limiting
+#
+# The public chat endpoint is unauthenticated and every call costs an LLM
+# completion — two when retrieval misses and the classifier runs. All tenants
+# share one API key, so a loop against one known slug drains the quota for
+# every bot on the deployment. This is the counter that stops that.
+#
+# A fixed window, not a sliding one: it is a single row and a single UPDATE,
+# the boundary-burst weakness is irrelevant at these limits, and a sliding
+# window would cost more than the abuse it prevents. Rows live in the database
+# rather than in memory so the limit survives a restart and would still hold
+# if a second worker were ever added.
+
+
+def rate_limit_exceeded(key, limit, window_seconds):
+    """True if this call should be refused. Counts the call when it is not.
+
+    Two threads racing the same key can both read the same count and both be
+    allowed. That is accepted: this is a throttle, not a ledger, and being
+    one request over the line matters far less than the lock contention
+    avoiding it would add to every chat request.
+    """
+    now = datetime.now(timezone.utc)
+    with connection() as cur:
+        row = cur.execute(
+            "SELECT window_start, hits FROM rate_limits WHERE key = ?", (key,)
+        ).fetchone()
+
+        if row is None:
+            cur.execute(
+                "INSERT INTO rate_limits (key, window_start, hits) VALUES (?, ?, 1)",
+                (key, now.isoformat()),
+            )
+            return False
+
+        age = (now - datetime.fromisoformat(row["window_start"])).total_seconds()
+        if age >= window_seconds:
+            cur.execute(
+                "UPDATE rate_limits SET window_start = ?, hits = 1 WHERE key = ?",
+                (now.isoformat(), key),
+            )
+            return False
+
+        if row["hits"] >= limit:
+            return True
+
+        cur.execute("UPDATE rate_limits SET hits = hits + 1 WHERE key = ?", (key,))
+        return False
+
+
+def clear_rate_limits(prefix=""):
+    """Used by the tests; also the manual lever if a limit ever misfires."""
+    with connection() as cur:
+        if prefix:
+            cur.execute("DELETE FROM rate_limits WHERE key LIKE ?", (prefix + "%",))
+        else:
+            cur.execute("DELETE FROM rate_limits")
 
 
 def token_valid(token, purpose):

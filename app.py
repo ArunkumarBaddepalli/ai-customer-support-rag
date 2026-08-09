@@ -19,7 +19,9 @@ a URL parameter, so a signed-in user can only ever touch their own workspace.
 import os
 import re
 import time
+from datetime import timedelta
 from functools import wraps
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -36,12 +38,62 @@ import db
 import ingest
 import mailer
 import rag
-from security import hash_password, verify_password
+from security import (
+    CSRF_FIELD, csrf_ok, hash_password, issue_csrf_token, verify_password,
+)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB upload cap
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# "Production" is taken to mean a real database is configured. That is the one
+# signal available at import time that distinguishes a deploy from someone
+# running `python app.py`, and it is the same switch the storage layer uses.
+IS_PRODUCTION = bool(os.environ.get("DATABASE_URL", "").strip())
+
+# SECRET_KEY signs the session cookie. Falling back to a random key looks
+# harmless and is not: every restart silently signs out every user, and with
+# more than one worker each process generates a *different* key, so logins
+# start failing depending on which worker answers. Refusing to boot is far
+# easier to diagnose than that. Locally a random key is fine — losing a dev
+# session on restart costs nothing.
+_secret = os.environ.get("SECRET_KEY", "").strip()
+if not _secret:
+    if IS_PRODUCTION:
+        raise RuntimeError(
+            "SECRET_KEY is not set. Sessions cannot be signed reliably without "
+            "it — set it to a long random string before deploying.")
+    _secret = os.urandom(24)
+app.secret_key = _secret
+
+app.config.update(
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,     # 2 MB upload cap
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,           # JavaScript must not read the session
+    # Secure is gated on production rather than hardcoded: with it always on,
+    # local development over http://localhost could never log in at all.
+    SESSION_COOKIE_SECURE=IS_PRODUCTION,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14),
+)
+
+
+@app.after_request
+def _security_headers(response):
+    """Headers a browser needs to be told, since it assumes the worst otherwise.
+
+    setdefault throughout, so a view that deliberately sets its own value
+    (the logo route, a future embed widget) keeps it.
+    """
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # A tenant's public chat page is the one thing that legitimately gets
+    # framed later (the embed widget on the roadmap). Everything else — the
+    # dashboard above all — must never be, or a transparent iframe over an
+    # attacker's page turns a stray click into a settings change.
+    framing = "SAMEORIGIN" if request.path.startswith("/c/") else "DENY"
+    response.headers.setdefault("X-Frame-Options", framing)
+    if IS_PRODUCTION:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 # Render (and any host behind a reverse proxy) terminates TLS at the edge and
 # forwards plain HTTP to the container. Without this, Flask has no way to know
@@ -90,7 +142,28 @@ def with_tenant(view):
 
 @app.context_processor
 def inject_user():
-    return {"user": current_user()}
+    return {"user": current_user(), "csrf_token": issue_csrf_token(session)}
+
+
+# Routes that authenticate per-request rather than by session cookie, so there
+# is no ambient credential for another site to ride on. The public chat API is
+# the only one: it is unauthenticated by design, and requiring a token there
+# would break the embed widget on the roadmap for no security gain.
+CSRF_EXEMPT_PREFIXES = ("/api/",)
+
+
+@app.before_request
+def _require_csrf():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    if request.path.startswith(CSRF_EXEMPT_PREFIXES):
+        return None
+    if csrf_ok(session, request.form.get(CSRF_FIELD)):
+        return None
+    # 400, not 403: the request is malformed as far as this app is concerned,
+    # and a distinct code makes the failure obvious in logs rather than looking
+    # like a permissions problem.
+    return render_template("csrf_error.html"), 400
 
 
 # ------------------------------------------------------------ public site
@@ -152,13 +225,30 @@ def login():
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password") or ""
 
-        # Progressive delay per account and per source IP — see the note on
+        # Progressive backoff per account and per source IP — see the note on
         # login_attempts in db.py for why this throttles rather than locks.
         email_key = f"email:{email.lower()}"
         ip_key = f"ip:{request.remote_addr or 'unknown'}"
         delay = max(db.get_login_delay(email_key), db.get_login_delay(ip_key))
         if delay:
-            time.sleep(delay)
+            # Refuse immediately rather than sleeping through the backoff.
+            # Sleeping spends the delay *inside the request*, holding a server
+            # thread: production runs 4 threads and the backoff caps at 20s, so
+            # four deliberately-wrong passwords parked every thread and the
+            # whole app — every dashboard, every tenant's bot — stopped
+            # answering. An attacker needed four sockets and no credentials.
+            # Rejecting keeps the schedule and the pressure identical while
+            # costing the server nothing.
+            db.record_login_failure(email_key)
+            db.record_login_failure(ip_key)
+            # Rounded up to 5s so the number is not a precise oracle for how
+            # many failures someone else has racked up against this address.
+            wait = max(5, -(-delay // 5) * 5)
+            return render_template(
+                "login.html",
+                error=f"Too many attempts. Wait about {wait} seconds and try again.",
+                email=email,
+            ), 429
 
         user = db.get_user_by_email(email)
 
@@ -204,13 +294,50 @@ def verify_email(token):
     return render_template("token_result.html", status=status, purpose="verify")
 
 
+def _back_with(back, **params):
+    """Return `back` with these query params *replaced*, not appended.
+
+    Appending is the obvious version and it is wrong: the second click's
+    Referer is already `/dashboard?verify=sent`, so appending produces
+    `?verify=sent&verify=wait` and request.args.get() reads the first one.
+    The banner then claims an email was sent when the cooldown blocked it —
+    worse than the silent button this feature replaced.
+    """
+    parts = urlsplit(back)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k not in params]
+    query += list(params.items())
+    return urlunsplit(("", "", parts.path, urlencode(query), parts.fragment))
+
+
+def _safe_back(default_endpoint="dashboard"):
+    """Where to return after a POST, taken from the Referer header.
+
+    Only a same-site *path* is accepted. request.referrer is set by the
+    browser but is not trustworthy input — echoing it into a redirect is how
+    an open redirect gets built, and an open redirect on a logged-in route is
+    a phishing primitive ("you were on our site a moment ago").
+    """
+    back = request.referrer or ""
+    if back.startswith("/") and not back.startswith("//"):
+        return back
+    return url_for(default_endpoint)
+
+
 @app.route("/resend-verification", methods=["POST"])
 @login_required
 def resend_verification():
     user = current_user()
-    if not user["email_verified"] and not db.recently_sent(user["id"], "verify"):
+    back = _safe_back()
+    if user["email_verified"]:
+        return redirect(back)
+    # The cooldown is a spam-reputation guard, not a security control — a
+    # button that fires a fresh email on every click is how a sending address
+    # gets flagged. Say so rather than silently doing nothing, which reads as
+    # a broken button.
+    outcome = "wait" if db.recently_sent(user["id"], "verify") else "sent"
+    if outcome == "sent":
         _send_verification_email(user["id"], user["email"])
-    return redirect(request.referrer or url_for("dashboard"))
+    return redirect(_back_with(back, verify=outcome))
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
@@ -285,11 +412,11 @@ def onboarding(tenant):
             _handle_logo_fields(tenant)
 
             text = (request.form.get("text") or "").strip()
-            upload = request.files.get("file")
-            if (upload and upload.filename) or text:
-                _save_document(
+            uploads = [f for f in request.files.getlist("file") if f and f.filename]
+            if uploads or text:
+                _save_documents(
                     tenant,
-                    upload=upload,
+                    uploads=uploads,
                     title=(request.form.get("title") or "faq").strip(),
                     text=text,
                 )
@@ -313,13 +440,14 @@ def dashboard(tenant):
 
     if request.method == "POST":
         try:
-            filename = _save_document(
+            saved = _save_documents(
                 tenant,
-                upload=request.files.get("file"),
+                uploads=request.files.getlist("file"),
                 title=(request.form.get("title") or "").strip(),
                 text=(request.form.get("text") or "").strip(),
             )
-            message = f"Saved '{filename}' and rebuilt the search index."
+            names = ", ".join(f"'{n}'" for n in saved)
+            message = f"Saved {names} and rebuilt the search index."
         except ValueError as exc:
             error = str(exc)
 
@@ -454,11 +582,31 @@ def tenant_logo(slug):
                     headers={"Cache-Control": "public, max-age=300"})
 
 
+# Chat rate limits. Deliberately generous — a real customer types a handful of
+# questions, so these only bite on automated abuse. The per-IP limit stops one
+# source hammering; the per-tenant limit caps the damage one popular (or
+# targeted) bot can do to the shared LLM quota that every other tenant needs.
+CHAT_LIMIT_PER_IP = (60, 60)          # 60 questions per minute from one address
+CHAT_LIMIT_PER_TENANT = (1000, 3600)  # 1000 questions per hour for one workspace
+
+
 @app.route("/api/c/<slug>/chat", methods=["POST"])
 def chat_api(slug):
     tenant = db.get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
+
+    # Checked before any work is done, and before the LLM is touched at all —
+    # the whole point is that a refused request costs nothing.
+    limit, window = CHAT_LIMIT_PER_IP
+    if db.rate_limit_exceeded(f"chat-ip:{request.remote_addr or 'unknown'}", limit, window):
+        return jsonify({"error": "Too many questions — please slow down and try "
+                                 "again in a minute."}), 429
+
+    limit, window = CHAT_LIMIT_PER_TENANT
+    if db.rate_limit_exceeded(f"chat-tenant:{tenant['id']}", limit, window):
+        return jsonify({"error": "This assistant is unusually busy right now — "
+                                 "please try again shortly."}), 429
 
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
@@ -606,33 +754,62 @@ def _handle_logo_fields(tenant):
     db.save_logo(tenant["id"], data, MIME_TYPES[ext])
 
 
-def _save_document(tenant, upload, title, text):
-    """Store a .txt document in the database and rebuild the tenant's index."""
-    if upload and upload.filename:
-        filename = secure_filename(upload.filename)
-        if not filename.endswith(".txt"):
-            raise ValueError("Only .txt files are supported.")
-        try:
-            content = upload.read().decode("utf-8")
-        except UnicodeDecodeError:
-            raise ValueError("That file isn't readable as UTF-8 text.")
+def _read_upload(upload):
+    """Validate one uploaded file and return (filename, content)."""
+    filename = secure_filename(upload.filename)
+    if not filename.endswith(".txt"):
+        raise ValueError(f"Only .txt files are supported — '{upload.filename}' isn't one.")
+    try:
+        content = upload.read().decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"'{filename}' isn't readable as UTF-8 text.")
+    return filename, content
+
+
+def _save_documents(tenant, uploads, title, text):
+    """Store one or more .txt documents, then rebuild the tenant's index once.
+
+    Every file is validated and read *before* anything is written, so one bad
+    file in a multi-file selection fails the whole submission rather than
+    leaving half the batch saved and the other half rejected.
+    """
+    uploads = [f for f in (uploads or []) if f and f.filename]
+
+    if uploads:
+        pending = [_read_upload(f) for f in uploads]
     elif title and text:
         filename = secure_filename(title)
         if not filename.endswith(".txt"):
             filename += ".txt"
-        content = text
+        pending = [(filename, text)]
     else:
         raise ValueError("Provide either a .txt file or a title and some text.")
 
-    if not filename or filename == ".txt":
-        raise ValueError("Give the document a valid name.")
-    if not content.strip():
-        raise ValueError("The document is empty.")
+    seen = set()
+    for filename, content in pending:
+        if not filename or filename == ".txt":
+            raise ValueError("Give the document a valid name.")
+        if not content.strip():
+            raise ValueError(f"'{filename}' is empty.")
+        # Documents are keyed on (tenant, filename) and saving upserts, so two
+        # files sharing a name in one batch would leave only the last one —
+        # while the success message still claimed both were saved. Two folders
+        # each holding a faq.txt is the obvious way to hit this.
+        if filename in seen:
+            raise ValueError(
+                f"Two of those files are both named '{filename}'. Rename one, "
+                "or upload them separately.")
+        seen.add(filename)
 
-    db.save_document(tenant["id"], filename, content)
+    for filename, content in pending:
+        db.save_document(tenant["id"], filename, content)
+
+    # One rebuild for the whole batch. The index is derived from *every*
+    # document the tenant has, so rebuilding per file would repeat the same
+    # work N times and leave the index briefly stale in between.
     ingest.build_index(tenant["id"], tenant["slug"])
     rag.reload_index(tenant["slug"])
-    return filename
+    return [filename for filename, _ in pending]
 
 
 @app.errorhandler(404)
