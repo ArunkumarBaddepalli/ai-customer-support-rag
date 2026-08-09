@@ -510,9 +510,13 @@ a.post("/login", {"email": EMAIL2, "password": "password123"})
 code, _, _ = a.post("/dashboard/documents/..%2F..%2Fsample_docs%2Ffaq.txt/delete")
 check("security", "path traversal on delete blocked", code in (302, 404), f"got {code}")
 
-import os
-check("security", "sample docs untouched",
-      os.path.exists("/Users/NI011/Desktop/AI Customer-Support Assistant (RAG)/sample_docs/faq.txt"))
+# Resolved from this file's own location, never hardcoded: an absolute path
+# to somebody's machine silently becomes False the moment the repository is
+# moved, and this is the assertion that proves the traversal above did not
+# actually delete anything.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAMPLE_FAQ = os.path.join(REPO_ROOT, "sample_docs", "faq.txt")
+check("security", "sample docs untouched", os.path.exists(SAMPLE_FAQ), SAMPLE_FAQ)
 
 code, html, _ = a.post("/dashboard/settings",
     fields={"company_name": "Zen Spa"},

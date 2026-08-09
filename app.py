@@ -676,11 +676,21 @@ def _save_documents(tenant, uploads, title, text):
     else:
         raise ValueError("Provide either a .txt file or a title and some text.")
 
+    seen = set()
     for filename, content in pending:
         if not filename or filename == ".txt":
             raise ValueError("Give the document a valid name.")
         if not content.strip():
             raise ValueError(f"'{filename}' is empty.")
+        # Documents are keyed on (tenant, filename) and saving upserts, so two
+        # files sharing a name in one batch would leave only the last one —
+        # while the success message still claimed both were saved. Two folders
+        # each holding a faq.txt is the obvious way to hit this.
+        if filename in seen:
+            raise ValueError(
+                f"Two of those files are both named '{filename}'. Rename one, "
+                "or upload them separately.")
+        seen.add(filename)
 
     for filename, content in pending:
         db.save_document(tenant["id"], filename, content)
