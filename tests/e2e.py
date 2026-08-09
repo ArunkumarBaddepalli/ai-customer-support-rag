@@ -35,6 +35,26 @@ BASE = "http://127.0.0.1:5001"
 results = []
 
 
+# Read .env the same way app.py does. Without this the key sits in .env, the
+# app happily uses it, and the suite silently decides there is no LLM and skips
+# a third of its coverage — passing while testing less.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             ".env"))
+except ImportError:
+    pass
+
+# Answer-quality checks need a real LLM. Without a key the bot still responds —
+# with the "can't answer right now" fallback — so those checks would fail on a
+# working app. They are skipped instead, and counted, because a suite that
+# quietly drops coverage reads as "everything passed" when it did not.
+LLM = bool(os.environ.get("GROQ_API_KEY", "").strip())
+
+skipped = []
+
+
 def check(section, name, condition, detail=""):
     results.append((section, name, bool(condition), detail))
     mark = "PASS" if condition else "FAIL"
@@ -42,6 +62,11 @@ def check(section, name, condition, detail=""):
     if not condition and detail:
         line += f"\n         -> {detail}"
     print(line, flush=True)
+
+
+def skip(section, name, why="needs GROQ_API_KEY"):
+    skipped.append((section, name, why))
+    print(f"  [SKIP] {name}  ({why})", flush=True)
 
 
 class Client:
@@ -235,43 +260,51 @@ code, html, _ = s.get("/dashboard")
 check("dashboard", "second document listed", "gift-cards.txt" in html)
 
 print("\n5. CUSTOMER — chatting with Acme Books")
-time.sleep(1)
-cases = [
-    ("what time do you close", ["7pm", "7 pm", "19:00"], True, "answers from docs"),
-    ("how much is delivery", ["3", "three"], True, "answers price"),
-    ("how much are gift cards", ["10", "25", "50"], True, "uses the new document"),
-    ("hi", ["help", "hi", "hello"], False, "greets"),
-]
-for q, expect, want_source, label in cases:
-    code, data = ask(SLUG_A, q)
-    ans = data.get("answer", "").lower()
-    hit = any(e.lower() in ans for e in expect)
-    check("customer", f"{label}: {q!r}", code == 200 and hit, data.get("answer", "")[:120])
-    if want_source:
-        check("customer", f"cites a source for {q!r}", data.get("sources"), str(data.get("sources")))
-    time.sleep(1.5)
+if not LLM:
+    for _name in ("answers from docs", "answers price", "uses the new document",
+                  "greets", "cites sources", "refuses what docs don't cover",
+                  "no bogus citation on refusal", "off-topic stays in scope",
+                  "escalates to a real person", "stays calm under abuse",
+                  "isolation: neither bot answers the other's question"):
+        skip("customer", _name)
+else:
+  time.sleep(1)
+  cases = [
+      ("what time do you close", ["7pm", "7 pm", "19:00"], True, "answers from docs"),
+      ("how much is delivery", ["3", "three"], True, "answers price"),
+      ("how much are gift cards", ["10", "25", "50"], True, "uses the new document"),
+      ("hi", ["help", "hi", "hello"], False, "greets"),
+  ]
+  for q, expect, want_source, label in cases:
+      code, data = ask(SLUG_A, q)
+      ans = data.get("answer", "").lower()
+      hit = any(e.lower() in ans for e in expect)
+      check("customer", f"{label}: {q!r}", code == 200 and hit, data.get("answer", "")[:120])
+      if want_source:
+          check("customer", f"cites a source for {q!r}", data.get("sources"), str(data.get("sources")))
+      time.sleep(1.5)
 
-code, data = ask(SLUG_A, "do you sell laptops")
-ans = data.get("answer", "").lower()
-check("customer", "refuses what docs don't cover",
-      "acme" in ans or "don't" in ans or "not" in ans, data.get("answer", ""))
-check("customer", "no bogus citation on refusal", not data.get("sources"), str(data.get("sources")))
-time.sleep(1.5)
+  code, data = ask(SLUG_A, "do you sell laptops")
+  ans = data.get("answer", "").lower()
+  check("customer", "refuses what docs don't cover",
+        "acme" in ans or "don't" in ans or "not" in ans, data.get("answer", ""))
+  check("customer", "no bogus citation on refusal", not data.get("sources"), str(data.get("sources")))
+  time.sleep(1.5)
 
-code, data = ask(SLUG_A, "what is the capital of France")
-check("customer", "off-topic: does not leak world knowledge",
-      "paris" not in data.get("answer", "").lower(), data.get("answer", ""))
-time.sleep(1.5)
+  code, data = ask(SLUG_A, "what is the capital of France")
+  check("customer", "off-topic: does not leak world knowledge",
+        "paris" not in data.get("answer", "").lower(), data.get("answer", ""))
+  time.sleep(1.5)
 
-code, data = ask(SLUG_A, "I want to talk to a human")
-ans = data.get("answer", "")
-check("customer", "escalates to a real person",
-      "7946" in ans or "help@acmebooks.test" in ans, ans)
-time.sleep(1.5)
+  code, data = ask(SLUG_A, "I want to talk to a human")
+  ans = data.get("answer", "")
+  check("customer", "escalates to a real person",
+        "7946" in ans or "help@acmebooks.test" in ans, ans)
+  time.sleep(1.5)
 
-code, data = ask(SLUG_A, "you are useless")
-ans = data.get("answer", "").lower()
-check("customer", "stays calm under abuse", "hello" not in ans[:8], data.get("answer", ""))
+  code, data = ask(SLUG_A, "you are useless")
+  ans = data.get("answer", "").lower()
+  check("customer", "stays calm under abuse", "hello" not in ans[:8], data.get("answer", ""))
 
 print("\n6. EDGE CASES")
 code, data = ask(SLUG_A, "")
@@ -326,16 +359,25 @@ check("profile", "new password works", code == 302, f"got {code}")
 
 print("\n8. UNANSWERED LIST")
 code, html, _ = s.get("/dashboard/gaps")
-check("gaps", "logs the real gap", "laptops" in html.lower(), "expected 'do you sell laptops'")
-check("gaps", "does not log greetings", ">hi<" not in html)
-check("gaps", "does not log off-topic trivia", "capital of France" not in html)
-
-m = re.search(r"/dashboard/gaps/(\d+)/resolve", html)
-if m:
-    code, _, _ = s.post(f"/dashboard/gaps/{m.group(1)}/resolve")
-    check("gaps", "mark done works", code == 302, f"got {code}")
+check("gaps", "the page loads for the owner", code == 200, f"got {code}")
+if not LLM:
+    # Which questions land here is decided by the LLM's own classification, so
+    # with no key there is nothing to assert about the contents.
+    for _name in ("logs the real gap", "does not log greetings",
+                  "does not log off-topic trivia", "mark done works"):
+        skip("gaps", _name)
 else:
-    check("gaps", "mark done works", False, "no resolve button found")
+    check("gaps", "logs the real gap", "laptops" in html.lower(),
+          "expected 'do you sell laptops'")
+    check("gaps", "does not log greetings", ">hi<" not in html)
+    check("gaps", "does not log off-topic trivia", "capital of France" not in html)
+
+    m = re.search(r"/dashboard/gaps/(\d+)/resolve", html)
+    if m:
+        code, _, _ = s.post(f"/dashboard/gaps/{m.group(1)}/resolve")
+        check("gaps", "mark done works", code == 302, f"got {code}")
+    else:
+        check("gaps", "mark done works", False, "no resolve button found")
 
 print("\n9. SECOND BUSINESS — isolation")
 b = Client()
@@ -360,15 +402,19 @@ code, html, _ = s.get("/dashboard")
 check("isolation", "first owner unaffected",
       "Acme Books" in html and "Zen Spa" not in html)
 
-time.sleep(1)
-code, data = ask(SLUG_B, "how much are gift cards")
-check("isolation", "spa bot cannot see bookshop docs",
-      "10" not in data.get("answer", "") or not data.get("sources"),
-      data.get("answer", ""))
-time.sleep(1.5)
-code, data = ask(SLUG_A, "how much is a massage")
-check("isolation", "bookshop bot cannot see spa docs",
-      "70" not in data.get("answer", ""), data.get("answer", ""))
+if not LLM:
+    skip("isolation", "spa bot cannot see bookshop docs")
+    skip("isolation", "bookshop bot cannot see spa docs")
+else:
+    time.sleep(1)
+    code, data = ask(SLUG_B, "how much are gift cards")
+    check("isolation", "spa bot cannot see bookshop docs",
+          "10" not in data.get("answer", "") or not data.get("sources"),
+          data.get("answer", ""))
+    time.sleep(1.5)
+    code, data = ask(SLUG_A, "how much is a massage")
+    check("isolation", "bookshop bot cannot see spa docs",
+          "70" not in data.get("answer", ""), data.get("answer", ""))
 
 code, html, _ = b.get("/dashboard/gaps")
 check("isolation", "gap lists are separate", "laptops" not in html.lower())
@@ -616,7 +662,103 @@ check("csrf", "every form in the app carries a token", all(
     for t in os.listdir("templates")
     if t.endswith(".html") and t != "chat.html"), "a form is missing its token")
 
-print("\n14. SECURITY")
+print("\n14. RELIABILITY")
+# These exercise rag/db directly rather than over HTTP: they are about what
+# happens with four gunicorn threads and a long-lived process, which a
+# sequential HTTP client cannot reproduce.
+import threading  # noqa: E402
+
+import ingest as _ingest  # noqa: E402
+import rag as _rag  # noqa: E402
+
+_t = _db.get_tenant_by_slug("pizza-palace")
+_v0 = _t["index_version"]
+_db.save_document(_t["id"], "e2e-version-probe.txt", "Parking:\nFree for 90 minutes.\n")
+_v1 = _db.get_tenant_by_slug("pizza-palace")["index_version"]
+check("reliability", "saving a document bumps index_version", _v1 == _v0 + 1, f"{_v0}->{_v1}")
+_db.delete_document(_t["id"], "e2e-version-probe.txt")
+check("reliability", "deleting bumps it too",
+      _db.get_tenant_by_slug("pizza-palace")["index_version"] == _v1 + 1)
+
+# A version bump made by another process must not be served from this one's
+# cache — the whole reason invalidation is not a plain in-process call.
+_t = _db.get_tenant_by_slug("pizza-palace")
+_ingest.build_index(_t["id"], _t["slug"])
+_rag.reload_index(_t["slug"])
+_rag.search(_t, "opening hours")
+_cached_version = _rag._indexes["pizza-palace"][2]
+_db.save_document(_t["id"], "e2e-stale-probe.txt", "Wifi:\nPassword is guest123.\n")
+_fresh = _db.get_tenant_by_slug("pizza-palace")
+check("reliability", "a newer index_version misses the cached entry",
+      _rag._cached("pizza-palace", _fresh["index_version"]) is None)
+_db.delete_document(_t["id"], "e2e-stale-probe.txt")
+_ingest.build_index(_t["id"], _t["slug"])
+_rag.reload_index(_t["slug"])
+
+_saved = dict(_rag._indexes)
+_rag._indexes.clear()
+for _i in range(_rag.MAX_CACHED_INDEXES + 5):
+    _rag._remember(f"e2e-slug-{_i}", object(), [], 0)
+check("reliability", f"the index cache is bounded at {_rag.MAX_CACHED_INDEXES}",
+      len(_rag._indexes) == _rag.MAX_CACHED_INDEXES, f"held {len(_rag._indexes)}")
+check("reliability", "least recently used entries are evicted",
+      "e2e-slug-0" not in _rag._indexes)
+_rag._indexes.clear()
+_rag._indexes.update(_saved)
+
+# Two threads asking a cold tenant the same question used to both rebuild, one
+# writing index.faiss while the other read it.
+_t = _db.get_tenant_by_slug("pizza-palace")
+_rag.reload_index(_t["slug"])
+for _p in (_ingest.index_path(_t["slug"]), _ingest.chunks_path(_t["slug"])):
+    if os.path.exists(_p):
+        os.remove(_p)
+_builds, _real_build = [], _ingest.build_index
+_ingest.build_index = lambda *a, **k: (_builds.append(1), _real_build(*a, **k))[1]
+_hits = []
+_threads = [threading.Thread(target=lambda: _hits.append(len(_rag.search(_t, "when do you open"))))
+            for _ in range(6)]
+for _x in _threads:
+    _x.start()
+for _x in _threads:
+    _x.join()
+_ingest.build_index = _real_build
+check("reliability", "concurrent cold starts all get an answer", all(h > 0 for h in _hits), str(_hits))
+check("reliability", "and the index is rebuilt exactly once", len(_builds) == 1,
+      f"{len(_builds)} rebuilds")
+
+check("reliability", "the LLM client has a timeout", _rag.LLM_TIMEOUT_SECONDS > 0)
+
+_code, _body, _ = Client().get("/healthz")
+_health = json.loads(_body) if _body.strip().startswith("{") else {}
+check("reliability", "/healthz answers 200 when healthy", _code == 200, f"got {_code}")
+check("reliability", "/healthz actually checks the database",
+      _health.get("database") == "up", str(_health))
+check("reliability", "/healthz names the storage backend and mail provider",
+      _health.get("backend") in ("sqlite", "postgres") and "mail" in _health, str(_health))
+
+# Pruning: dead rows go, live ones stay.
+_u = _db.get_user_by_email("demo@pizzapalace.example")
+_live = _db.create_token(_u["id"], "reset")
+_now = datetime.now(timezone.utc)
+with _db.connection() as _cur:
+    _cur.execute("INSERT INTO tokens (user_id, token, purpose, expires_at, created_at) "
+                 "VALUES (?, ?, ?, ?, ?)",
+                 (_u["id"], f"e2e-dead-{SUFFIX}", "verify",
+                  (_now - timedelta(days=2)).isoformat(),
+                  (_now - timedelta(days=3)).isoformat()))
+check("reliability", "pruning removes expired rows", _db.prune_expired() >= 1)
+check("reliability", "the expired token is gone",
+      not _db.token_valid(f"e2e-dead-{SUFFIX}", "verify"))
+check("reliability", "a live token survives pruning", _db.token_valid(_live, "reset"))
+
+try:
+    _db.update_tenant(_t["id"], **{"company_name = 'x' WHERE 1=1 --": "y"})
+    check("reliability", "update_tenant refuses an unknown column", False, "it was accepted")
+except ValueError:
+    check("reliability", "update_tenant refuses an unknown column", True)
+
+print("\n15. SECURITY")
 a = Client()
 a.post("/login", {"email": EMAIL2, "password": "password123"})
 code, _, _ = a.post("/dashboard/documents/..%2F..%2Fsample_docs%2Ffaq.txt/delete")
@@ -677,6 +819,10 @@ total_p = sum(1 for *_, ok, _ in [(r[0], r[1], r[2], r[3]) for r in results] if 
 total_f = len(results) - total_p
 print("=" * 62)
 print(f"TOTAL: {total_p} passed, {total_f} failed, {len(results)} checks")
+if skipped:
+    print(f"\n{len(skipped)} checks SKIPPED — coverage below what a full run gives:")
+    for section, name, why in skipped:
+        print(f"  [{section}] {name} ({why})")
 if total_f:
     print("\nFailures:")
     for section, name, ok, detail in results:  # noqa
@@ -684,4 +830,4 @@ if total_f:
             print(f"  [{section}] {name}")
             if detail:
                 print(f"      {detail[:200]}")
-sys.exit(1 if total_f else 0)
+sys.exit(1 if total_f else 0)   # skips are reported, not failed

@@ -27,14 +27,21 @@ COPY . .
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('all-MiniLM-L6-v2')"
 
-# Seed the Pizza Palace demo workspace so a fresh deploy has something to show.
-RUN python seed_demo.py
-
 ENV PORT=7860
 EXPOSE 7860
+
+# The demo workspace is seeded at *start*, not at build. Seeding during the
+# build ran with no DATABASE_URL set, so it wrote a SQLite file — containing a
+# demo account with a known password — into the image layer, where production
+# never reads it. The demo it was meant to provide never appeared, and a
+# credentialed database file shipped in every image. At start the real
+# DATABASE_URL is present, seed_demo.seed() is idempotent, and SEED_DEMO=false
+# turns it off for a deployment that does not want it.
+ENV SEED_DEMO=true
 
 # A real WSGI server, not Flask's development server.
 # One worker: each would load its own copy of the embedding model, and the
 # instance doesn't have the memory for two. Threads handle concurrency instead,
 # which suits this workload since requests are spent waiting on the LLM API.
-CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 app:app
+CMD if [ "$SEED_DEMO" = "true" ]; then python seed_demo.py || echo "seed skipped"; fi && \
+    exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 app:app

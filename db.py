@@ -247,6 +247,11 @@ def init_db():
                 hits INTEGER NOT NULL DEFAULT 0
             )
         """)
+        # Bumped on every document change. rag.py compares it against what it
+        # cached, so an upload is picked up by *every* process rather than only
+        # the one that handled it.
+        _add_column_if_missing(cur, "tenants", "index_version",
+                               "INTEGER NOT NULL DEFAULT 0")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_docs_tenant ON documents(tenant_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_unanswered_tenant ON unanswered(tenant_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id)")
@@ -483,6 +488,34 @@ def rate_limit_exceeded(key, limit, window_seconds):
         return False
 
 
+def prune_expired(now=None):
+    """Delete rows that can no longer affect any decision.
+
+    Three tables only ever grew: every verification and reset link ever issued
+    (including consumed ones), a counter for every email and address that ever
+    failed a login, and a rate-limit row per source. None of it is read once it
+    is past its window, so none of it needs keeping.
+
+    Called at startup and occasionally from the login path — startup alone
+    would never fire again on a long-lived instance. Returns the number of rows
+    removed, which is what makes it testable.
+    """
+    now = now or datetime.now(timezone.utc)
+    stale_attempts = (now - _timedelta(minutes=LOGIN_BACKOFF_WINDOW_MINUTES)).isoformat()
+    # Rate-limit windows are at most an hour; a day is a wide safety margin.
+    stale_limits = (now - _timedelta(days=1)).isoformat()
+    removed = 0
+    with connection() as cur:
+        for sql, params in (
+            ("DELETE FROM tokens WHERE expires_at < ?", (now.isoformat(),)),
+            ("DELETE FROM login_attempts WHERE last_attempt_at < ?", (stale_attempts,)),
+            ("DELETE FROM rate_limits WHERE window_start < ?", (stale_limits,)),
+        ):
+            cur.execute(sql, params)
+            removed += cur._raw.rowcount or 0
+    return removed
+
+
 def clear_rate_limits(prefix=""):
     """Used by the tests; also the manual lever if a limit ever misfires."""
     with connection() as cur:
@@ -573,9 +606,23 @@ def get_tenant_for_user(user_id):
         ).fetchone()
 
 
+# Values are parameterised, but column *names* are formatted straight into the
+# statement below — they have to be, SQL has no placeholder for an identifier.
+# Every caller passes literal keyword arguments today, so nothing is injectable;
+# this list is what keeps that true after someone writes update_tenant(**form),
+# which looks perfectly harmless.
+TENANT_UPDATABLE = frozenset({
+    "company_name", "company_tagline", "brand_color",
+    "support_phone", "support_email", "onboarded", "index_version",
+})
+
+
 def update_tenant(tenant_id, **fields):
     if not fields:
         return
+    unknown = set(fields) - TENANT_UPDATABLE
+    if unknown:
+        raise ValueError(f"Not an updatable tenant column: {sorted(unknown)}")
     columns = ", ".join(f"{key} = ?" for key in fields)
     with connection() as cur:
         cur.execute(f"UPDATE tenants SET {columns} WHERE id = ?",
@@ -589,6 +636,16 @@ def support_contact_line(tenant):
 
 
 # ------------------------------------------------------------ documents
+
+
+def _bump_index_version(cur, tenant_id):
+    """Mark this tenant's search index as out of date.
+
+    Done inside the same transaction as the document write, so the version can
+    never claim to be current for content that failed to save.
+    """
+    cur.execute("UPDATE tenants SET index_version = index_version + 1 WHERE id = ?",
+                (tenant_id,))
 
 
 def save_document(tenant_id, filename, content):
@@ -606,6 +663,7 @@ def save_document(tenant_id, filename, content):
             """,
             (tenant_id, filename, content, now),
         )
+        _bump_index_version(cur, tenant_id)
 
 
 def get_documents(tenant_id):
@@ -624,6 +682,7 @@ def delete_document(tenant_id, filename):
     with connection() as cur:
         cur.execute("DELETE FROM documents WHERE tenant_id = ? AND filename = ?",
                     (tenant_id, filename))
+        _bump_index_version(cur, tenant_id)
 
 
 # ---------------------------------------------------------------- logos

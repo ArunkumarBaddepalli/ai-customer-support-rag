@@ -8,6 +8,8 @@ small talk, abuse, and off-topic messages without inventing business facts.
 
 import os
 import pickle
+import threading
+from collections import OrderedDict
 
 import faiss
 import numpy as np
@@ -34,13 +36,32 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 GROQ_MODEL = "llama-3.1-8b-instant"
 
 TOP_K = 4
+# Generous enough for a slow-but-working completion, short enough that a hung
+# one frees its thread well inside gunicorn's 120s request timeout.
+LLM_TIMEOUT_SECONDS = 20.0
 # cosine similarity below this = no usable context, so the LLM is told to answer
 # without inventing business facts (small talk is fine, made-up prices are not)
 MIN_SIMILARITY = 0.20
 
 _embedder = None
 _groq_client = None
-_indexes = {}  # slug -> (faiss index, chunks)
+
+# slug -> (faiss index, chunks, index_version). An OrderedDict used as an LRU:
+# each entry holds a FAISS index plus every chunk's text, and nothing used to
+# evict, so memory grew with the tenant count on an instance already sized
+# tightly around the embedding model.
+MAX_CACHED_INDEXES = 20
+_indexes = OrderedDict()
+
+# Guards the dict itself. Held only for dict operations, never across a rebuild.
+_cache_lock = threading.Lock()
+
+# One lock per tenant, so a cold rebuild for one workspace does not block chat
+# requests for every other workspace. Without any lock, two threads asking the
+# same fresh tenant a question both missed the cache, both rebuilt, and one
+# wrote index.faiss while the other was reading it — a corrupt read, in exactly
+# the first-request-after-deploy moment when it is most likely.
+_build_locks = {}
 
 
 def _get_embedder():
@@ -50,17 +71,32 @@ def _get_embedder():
     return _embedder
 
 
-def _load_index(tenant):
-    """Load one tenant's index, rebuilding it from the database if absent.
+def _lock_for(slug):
+    with _cache_lock:
+        return _build_locks.setdefault(slug, threading.Lock())
 
-    The index is a disk cache, not the source of truth. Free hosting wipes the
-    container's filesystem on every deploy, so the first search after a deploy
-    finds nothing on disk and regenerates it from the stored documents.
-    """
+
+def _cached(slug, version):
+    """The cached entry if it is present and current, else None."""
+    with _cache_lock:
+        entry = _indexes.get(slug)
+        if entry is None or entry[2] != version:
+            return None
+        _indexes.move_to_end(slug)      # most recently used
+        return entry[0], entry[1]
+
+
+def _remember(slug, index, chunks, version):
+    with _cache_lock:
+        _indexes[slug] = (index, chunks, version)
+        _indexes.move_to_end(slug)
+        while len(_indexes) > MAX_CACHED_INDEXES:
+            _indexes.popitem(last=False)    # evict the least recently used
+
+
+def _read_from_disk(tenant):
+    """Read this tenant's index off disk, building it first if it isn't there."""
     slug = tenant["slug"]
-    if slug in _indexes:
-        return _indexes[slug]
-
     path = ingest.index_path(slug)
     if not os.path.exists(path):
         import db
@@ -69,17 +105,55 @@ def _load_index(tenant):
         print(f"[rag] rebuilding index for {slug} from the database")
         if not ingest.build_index(tenant["id"], slug):
             return None
-
     index = faiss.read_index(path)
     with open(ingest.chunks_path(slug), "rb") as f:
         chunks = pickle.load(f)
-    _indexes[slug] = (index, chunks)
-    return _indexes[slug]
+    return index, chunks
+
+
+def _load_index(tenant):
+    """Load one tenant's index, rebuilding it from the database if absent.
+
+    The index is a disk cache, not the source of truth. Free hosting wipes the
+    container's filesystem on every deploy, so the first search after a deploy
+    finds nothing on disk and regenerates it from the stored documents.
+
+    Freshness is decided by the tenant's index_version rather than by an
+    in-process invalidation call. reload_index() only ever cleared the cache in
+    the process that handled the upload — correct with one worker, and silently
+    wrong the moment there are two, where half the requests would keep
+    answering from a stale index with no error anywhere.
+    """
+    slug = tenant["slug"]
+    version = tenant.get("index_version", 0)
+
+    hit = _cached(slug, version)
+    if hit is not None:
+        return hit
+
+    with _lock_for(slug):
+        # Re-check under the lock: another thread may have finished the rebuild
+        # while this one was waiting for it.
+        hit = _cached(slug, version)
+        if hit is not None:
+            return hit
+
+        loaded = _read_from_disk(tenant)
+        if loaded is None:
+            return None
+        _remember(slug, loaded[0], loaded[1], version)
+        return loaded
 
 
 def reload_index(slug):
-    """Drop the cached index so the next search re-reads it from disk."""
-    _indexes.pop(slug, None)
+    """Drop the cached index so the next search re-reads it from disk.
+
+    Still called after an upload so this process sees the change immediately,
+    without waiting to notice the version bump. Other processes pick it up from
+    index_version on their next request.
+    """
+    with _cache_lock:
+        _indexes.pop(slug, None)
 
 
 def _get_groq_client():
@@ -101,7 +175,16 @@ def _get_groq_client():
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             raise RuntimeError("GROQ_API_KEY not set. Add it to your .env file.")
-        _groq_client = Groq(api_key=api_key)
+        # An explicit timeout, because the default is none: a hung connection
+        # would otherwise hold a worker thread until gunicorn's 120s limit, and
+        # there are only four threads. Three hung calls and the app is gone.
+        #
+        # max_retries=0 turns the SDK's own retry layer off. Retries are handled
+        # deliberately in _complete_with_retry() with a budget chosen to keep
+        # someone staring at a chat box waiting under ~5s; leaving both on would
+        # multiply into a worst case several times that.
+        _groq_client = Groq(api_key=api_key, timeout=LLM_TIMEOUT_SECONDS,
+                            max_retries=0)
     return _groq_client
 
 
