@@ -18,6 +18,7 @@ a URL parameter, so a signed-in user can only ever touch their own workspace.
 
 import os
 import re
+import secrets
 import time
 from datetime import timedelta
 from functools import wraps
@@ -28,7 +29,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import (
-    Flask, Response, abort, jsonify, redirect, render_template, request,
+    Flask, Response, abort, g, jsonify, redirect, render_template, request,
     session, url_for
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -110,13 +111,42 @@ def _security_headers(response):
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_for=1)
 
 db.init_db()
+db.prune_expired()   # clear anything left over from a previous run
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LENGTH = 8
 
 def current_user():
-    user_id = session.get("user_id")
-    return db.get_user(user_id) if user_id else None
+    """The signed-in user, looked up once per request.
+
+    Memoised on flask.g because this is called at least three times on every
+    authenticated page — the context processor, login_required, and again by
+    the view — and each call was a separate round trip. Against a database
+    that lives somewhere else entirely (Neon, Supabase) that is three lots of
+    network latency before any page logic runs.
+    """
+    if "user" not in g:
+        user_id = session.get("user_id")
+        g.user = db.get_user(user_id) if user_id else None
+    return g.user
+
+
+def current_tenant():
+    """The signed-in user's workspace, likewise looked up once per request."""
+    if "tenant" not in g:
+        user_id = session.get("user_id")
+        g.tenant = db.get_tenant_for_user(user_id) if user_id else None
+    return g.tenant
+
+
+def forget_cached_user():
+    """Drop the per-request cache after a write that changed the row.
+
+    Without this, a view that updates the user or tenant and then re-renders
+    would show the *old* values back to the person who just changed them.
+    """
+    g.pop("user", None)
+    g.pop("tenant", None)
 
 
 def login_required(view):
@@ -133,7 +163,7 @@ def with_tenant(view):
     @wraps(view)
     @login_required
     def wrapped(*args, **kwargs):
-        tenant = db.get_tenant_for_user(session["user_id"])
+        tenant = current_tenant()
         if not tenant:
             return redirect(url_for("signup"))
         return view(tenant, *args, **kwargs)
@@ -265,6 +295,11 @@ def login():
 
         db.record_login_failure(email_key)
         db.record_login_failure(ip_key)
+        # Opportunistic cleanup. Pruning only at startup would never run again
+        # on an instance that stays up for weeks, and a scheduler is more moving
+        # parts than three DELETEs deserve.
+        if secrets.randbelow(200) == 0:
+            db.prune_expired()
         error = "Wrong email or password."
 
     return render_template("login.html", error=error, email=email)
@@ -288,6 +323,7 @@ def verify_email(token):
     user_id = db.consume_token(token, "verify")
     if user_id:
         db.set_email_verified(user_id)
+        forget_cached_user()    # or the banner still says "isn't confirmed yet"
         status = "verified"
     else:
         status = "invalid"
@@ -489,7 +525,8 @@ def settings(tenant):
                 support_email=_clean_support_email(request.form.get("support_email")),
             )
             message = "Settings saved."
-            tenant = db.get_tenant_for_user(session["user_id"])
+            forget_cached_user()      # the row just changed; re-read it
+            tenant = current_tenant()
         except ValueError as exc:
             error = str(exc)
 
@@ -522,6 +559,7 @@ def profile(tenant):
                     raise ValueError("New passwords don't match.")
                 db.update_user_password(user["id"], hash_password(new))
                 message = "Password updated."
+            forget_cached_user()      # the row just changed; re-read it
             user = current_user()
         except ValueError as exc:
             error = str(exc)

@@ -616,7 +616,95 @@ check("csrf", "every form in the app carries a token", all(
     for t in os.listdir("templates")
     if t.endswith(".html") and t != "chat.html"), "a form is missing its token")
 
-print("\n14. SECURITY")
+print("\n14. RELIABILITY")
+# These exercise rag/db directly rather than over HTTP: they are about what
+# happens with four gunicorn threads and a long-lived process, which a
+# sequential HTTP client cannot reproduce.
+import threading  # noqa: E402
+
+import ingest as _ingest  # noqa: E402
+import rag as _rag  # noqa: E402
+
+_t = _db.get_tenant_by_slug("pizza-palace")
+_v0 = _t["index_version"]
+_db.save_document(_t["id"], "e2e-version-probe.txt", "Parking:\nFree for 90 minutes.\n")
+_v1 = _db.get_tenant_by_slug("pizza-palace")["index_version"]
+check("reliability", "saving a document bumps index_version", _v1 == _v0 + 1, f"{_v0}->{_v1}")
+_db.delete_document(_t["id"], "e2e-version-probe.txt")
+check("reliability", "deleting bumps it too",
+      _db.get_tenant_by_slug("pizza-palace")["index_version"] == _v1 + 1)
+
+# A version bump made by another process must not be served from this one's
+# cache — the whole reason invalidation is not a plain in-process call.
+_t = _db.get_tenant_by_slug("pizza-palace")
+_ingest.build_index(_t["id"], _t["slug"])
+_rag.reload_index(_t["slug"])
+_rag.search(_t, "opening hours")
+_cached_version = _rag._indexes["pizza-palace"][2]
+_db.save_document(_t["id"], "e2e-stale-probe.txt", "Wifi:\nPassword is guest123.\n")
+_fresh = _db.get_tenant_by_slug("pizza-palace")
+check("reliability", "a newer index_version misses the cached entry",
+      _rag._cached("pizza-palace", _fresh["index_version"]) is None)
+_db.delete_document(_t["id"], "e2e-stale-probe.txt")
+_ingest.build_index(_t["id"], _t["slug"])
+_rag.reload_index(_t["slug"])
+
+_saved = dict(_rag._indexes)
+_rag._indexes.clear()
+for _i in range(_rag.MAX_CACHED_INDEXES + 5):
+    _rag._remember(f"e2e-slug-{_i}", object(), [], 0)
+check("reliability", f"the index cache is bounded at {_rag.MAX_CACHED_INDEXES}",
+      len(_rag._indexes) == _rag.MAX_CACHED_INDEXES, f"held {len(_rag._indexes)}")
+check("reliability", "least recently used entries are evicted",
+      "e2e-slug-0" not in _rag._indexes)
+_rag._indexes.clear()
+_rag._indexes.update(_saved)
+
+# Two threads asking a cold tenant the same question used to both rebuild, one
+# writing index.faiss while the other read it.
+_t = _db.get_tenant_by_slug("pizza-palace")
+_rag.reload_index(_t["slug"])
+for _p in (_ingest.index_path(_t["slug"]), _ingest.chunks_path(_t["slug"])):
+    if os.path.exists(_p):
+        os.remove(_p)
+_builds, _real_build = [], _ingest.build_index
+_ingest.build_index = lambda *a, **k: (_builds.append(1), _real_build(*a, **k))[1]
+_hits = []
+_threads = [threading.Thread(target=lambda: _hits.append(len(_rag.search(_t, "when do you open"))))
+            for _ in range(6)]
+for _x in _threads:
+    _x.start()
+for _x in _threads:
+    _x.join()
+_ingest.build_index = _real_build
+check("reliability", "concurrent cold starts all get an answer", all(h > 0 for h in _hits), str(_hits))
+check("reliability", "and the index is rebuilt exactly once", len(_builds) == 1,
+      f"{len(_builds)} rebuilds")
+
+check("reliability", "the LLM client has a timeout", _rag.LLM_TIMEOUT_SECONDS > 0)
+
+# Pruning: dead rows go, live ones stay.
+_u = _db.get_user_by_email("demo@pizzapalace.example")
+_live = _db.create_token(_u["id"], "reset")
+_now = datetime.now(timezone.utc)
+with _db.connection() as _cur:
+    _cur.execute("INSERT INTO tokens (user_id, token, purpose, expires_at, created_at) "
+                 "VALUES (?, ?, ?, ?, ?)",
+                 (_u["id"], f"e2e-dead-{SUFFIX}", "verify",
+                  (_now - timedelta(days=2)).isoformat(),
+                  (_now - timedelta(days=3)).isoformat()))
+check("reliability", "pruning removes expired rows", _db.prune_expired() >= 1)
+check("reliability", "the expired token is gone",
+      not _db.token_valid(f"e2e-dead-{SUFFIX}", "verify"))
+check("reliability", "a live token survives pruning", _db.token_valid(_live, "reset"))
+
+try:
+    _db.update_tenant(_t["id"], **{"company_name = 'x' WHERE 1=1 --": "y"})
+    check("reliability", "update_tenant refuses an unknown column", False, "it was accepted")
+except ValueError:
+    check("reliability", "update_tenant refuses an unknown column", True)
+
+print("\n15. SECURITY")
 a = Client()
 a.post("/login", {"email": EMAIL2, "password": "password123"})
 code, _, _ = a.post("/dashboard/documents/..%2F..%2Fsample_docs%2Ffaq.txt/delete")
