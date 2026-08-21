@@ -33,7 +33,11 @@ from sentence_transformers import SentenceTransformer
 import ingest
 
 EMBED_MODEL = "all-MiniLM-L6-v2"
-GROQ_MODEL = "llama-3.1-8b-instant"
+# Groq retires models without notice: llama-3.1-8b-instant started returning
+# 404 model_not_found while retrieval kept working, so every answer fell
+# through to the "cannot answer right now" path. Overridable by env so the
+# next retirement is a config change on the host, not a redeploy.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
 TOP_K = 4
 # Generous enough for a slow-but-working completion, short enough that a hung
@@ -373,6 +377,21 @@ def _retry_after_seconds(exc):
         return None
 
 
+def _model_kwargs():
+    """Per-family generation settings.
+
+    gpt-oss is a reasoning model: its internal reasoning is billed against the
+    completion budget, so at 300 tokens the visible answer was cut off mid
+    sentence and the trailing outcome label never arrived — every reply landed
+    in _split_outcome's CHAT fallback, citing nothing and logging no gap.
+    reasoning_effort="low" plus more headroom restores both. The parameter is
+    rejected by non-reasoning models, so it is only sent when it applies.
+    """
+    if "gpt-oss" in GROQ_MODEL:
+        return {"max_tokens": 700, "reasoning_effort": "low"}
+    return {"max_tokens": 300}
+
+
 def _complete_with_retry(client, prompt, attempts=5):
     """Call the LLM, retrying on rate limits.
 
@@ -394,7 +413,7 @@ def _complete_with_retry(client, prompt, attempts=5):
                 # 0 = same question gives the same answer. Support answers
                 # should be consistent, and it makes eval.py reproducible.
                 temperature=0,
-                max_tokens=300,
+                **_model_kwargs(),
             )
         except Exception as exc:
             retryable = "rate_limit" in str(exc).lower() or "429" in str(exc)
