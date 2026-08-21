@@ -1,4 +1,9 @@
-FROM python:3.11-slim
+# 3.13, not 3.11: requirements.txt pins numpy==2.5.1, which publishes no
+# wheel below Python 3.12. On 3.11 the build died at pip install with
+# "Could not find a version that satisfies the requirement numpy==2.5.1",
+# so every deploy since the pins landed failed and the running container
+# stayed several commits behind the repository.
+FROM python:3.13-slim
 
 WORKDIR /app
 
