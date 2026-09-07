@@ -7,8 +7,9 @@ and saying "I don't know" instead of inventing an answer.
 Built with Retrieval-Augmented Generation. Each business is an isolated workspace with
 its own documents, its own search index, and its own branding.
 
-**Live demo:** https://ai-customer-support-rag-mpki.onrender.com
-*(free-tier hosting sleeps after ~15 min idle — the first request can take 30–60s to wake up)*
+**Running it:** the hosted demo is offline — the free-tier deployment lapsed. See
+[Running it locally](#running-it-locally); `python seed_demo.py` builds the demo
+workspace below in about a minute.
 
 Demo workspace: `/c/pizza-palace` · sign in as `demo@pizzapalace.example` / `demo12345`
 
