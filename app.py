@@ -316,8 +316,7 @@ def login():
             tenant = db.get_tenant_for_user(user["id"])
             if tenant and not tenant["onboarded"]:
                 return redirect(url_for("onboarding"))
-            nxt = request.args.get("next", "")
-            return redirect(nxt if nxt.startswith("/") else url_for("dashboard"))
+            return redirect(_safe_path(request.args.get("next", "")))
 
         db.record_login_failure(email_key)
         db.record_login_failure(ip_key)
@@ -371,18 +370,29 @@ def _back_with(back, **params):
     return urlunsplit(("", "", parts.path, urlencode(query), parts.fragment))
 
 
+def _safe_path(candidate, default_endpoint="dashboard"):
+    """Accept a redirect target only if it is a same-site path.
+
+    Starting with "/" is not sufficient. "//evil.com" starts with "/" too, and
+    a browser reads it as a protocol-relative URL and leaves the site; some
+    browsers normalise "/\\evil.com" the same way. An open redirect matters
+    most on the authenticated routes, because the victim genuinely was on our
+    site a moment earlier, which is the whole of a phishing primitive.
+
+    Anything that is not plainly our own path falls back to a route we own.
+    """
+    if candidate.startswith("/") and not candidate.startswith(("//", "/\\")):
+        return candidate
+    return url_for(default_endpoint)
+
+
 def _safe_back(default_endpoint="dashboard"):
     """Where to return after a POST, taken from the Referer header.
 
-    Only a same-site *path* is accepted. request.referrer is set by the
-    browser but is not trustworthy input — echoing it into a redirect is how
-    an open redirect gets built, and an open redirect on a logged-in route is
-    a phishing primitive ("you were on our site a moment ago").
+    request.referrer is set by the browser but is not trustworthy input, so it
+    goes through the same check as any other redirect target.
     """
-    back = request.referrer or ""
-    if back.startswith("/") and not back.startswith("//"):
-        return back
-    return url_for(default_endpoint)
+    return _safe_path(request.referrer or "", default_endpoint)
 
 
 @app.route("/resend-verification", methods=["POST"])

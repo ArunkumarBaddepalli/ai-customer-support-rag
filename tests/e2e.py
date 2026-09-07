@@ -822,6 +822,24 @@ out.post("/login", {"email": EMAIL2, "password": "password123"})
 out.get("/logout")
 check("security", "logout ends the session", out.get("/dashboard")[0] == 302)
 
+# The login route's redirect target deserves checks of its own. An open
+# redirect matters most here, because the victim genuinely was on our site a
+# moment earlier — that is the whole of the phishing primitive. Testing that
+# the target "starts with /" is not enough: "//evil.com" does, and a browser
+# reads it as protocol-relative and leaves.
+for hostile in ("//evil.com", "/\\evil.com", "https://evil.com"):
+    esc = Client()
+    _, _, loc = esc.post("/login?next=" + urllib.parse.quote(hostile, safe=""),
+                         {"email": EMAIL2, "password": "password123"})
+    check("security", f"login next={hostile} stays on the site",
+          "evil.com" not in loc, f"Location: {loc}")
+
+ours = Client()
+_, _, loc = ours.post("/login?next=" + urllib.parse.quote("/gaps", safe=""),
+                      {"email": EMAIL2, "password": "password123"})
+check("security", "login next= still honours one of our own paths",
+      loc.endswith("/gaps"), f"Location: {loc}")
+
 # ───────────────────────────── summary
 print("\n" + "=" * 62)
 by_section = {}
