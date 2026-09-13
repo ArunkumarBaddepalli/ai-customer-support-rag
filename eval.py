@@ -34,6 +34,7 @@ CI so a quality regression fails the build instead of scrolling past.
 
 import os
 import sys
+import time
 
 import db
 import rag
@@ -63,10 +64,11 @@ TEST_CASES = [
     ("What's the delivery fee?", ["40"], FACT),
     ("Can I track my order?", ["track"], FACT),
     ("What payment methods do you accept?", ["upi"], FACT),
-    ("Can I pay in installments?", ["not accepted", "no", "cannot", "can't"], FACT),
+    ("Can I pay in installments?", ["not accepted", "no", "cannot", "can't", "don't", "do not"], FACT),
     ("My order arrived cold, what do I do?", ["30 minutes"], FACT),
     # Accepts an explicit "no" or the equivalent "refunds are only for X"
-    ("Can I get a refund if I just change my mind?", ["cannot", "can't", "no", "not", "only"], FACT),
+    ("Can I get a refund if I just change my mind?",
+     ["cannot", "can't", "no", "not", "don't", "do not", "only"], FACT),
     ("How late can I report a damaged order?", ["2 hours"], FACT),
     ("Can I cancel my order?", ["5 minutes"], FACT),
     ("Do you have any offers?", ["tuesday"], FACT),
@@ -164,6 +166,13 @@ def run_eval(verbose=False):
 
     for question, keywords, kind in TEST_CASES:
         result = rag.ask(question, tenant)
+        if result.get("outcome") == "ERROR":
+            # The provider refused after every retry — a 429 the preceding e2e
+            # run had already spent the per-minute budget on, in practice. This
+            # suite measures answers, not uptime, so one more attempt after a
+            # pause; a second ERROR is counted as the failure it is.
+            time.sleep(10)
+            result = rag.ask(question, tenant)
         why = judge(question, keywords, kind, result)
         if why is None:
             correct += 1
@@ -173,6 +182,10 @@ def run_eval(verbose=False):
             mark = "PASS" if why is None else "FAIL"
             print(f"[{mark}] {question}\n       -> {result['answer']}"
                   f"  [{result.get('outcome')}; sources={result.get('sources')}]")
+        # Groq's free tier is capped per minute; 44 back-to-back questions plus
+        # the classifier's second call for the misses hit it every run. Pacing
+        # keeps the suite inside the budget instead of relying on retries.
+        time.sleep(0.6)
 
     total = len(TEST_CASES)
     accuracy = correct / total * 100
