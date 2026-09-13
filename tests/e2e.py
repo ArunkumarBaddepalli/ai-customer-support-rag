@@ -803,6 +803,15 @@ code, html, _ = a.post("/dashboard", fields={"title": "notes"},
                        files={"file": ("notes.exe", b"MZ\x90\x00")})
 check("security", "non-txt document rejected", "Only .txt" in html)
 
+# The same check was case-sensitive on the server and case-insensitive in the
+# dashboard's JavaScript, so a file the UI marked as fine failed the batch.
+code, html, _ = a.post("/dashboard",
+                       files={"file": ("PARKING.TXT", b"Parking:\nFree for 60 minutes.\n")})
+check("security", "uppercase .TXT extension accepted", "rebuilt the search index" in html,
+      html[:150])
+code, html, _ = a.get("/dashboard")
+check("security", "uppercase upload stored with a .txt extension", "PARKING.txt" in html)
+
 code, html, _ = a.post("/dashboard/settings",
     fields={"company_name": "Zen Spa"},
     files={"logo": ("broken.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)})

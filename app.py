@@ -831,8 +831,15 @@ def _handle_logo_fields(tenant):
 def _read_upload(upload):
     """Validate one uploaded file and return (filename, content)."""
     filename = secure_filename(upload.filename)
-    if not filename.endswith(".txt"):
+    # Case-insensitive, to match the dashboard's JavaScript, which already
+    # accepts PARKING.TXT. When the two disagreed the browser showed the file
+    # as fine and the server rejected it — and because a multi-file batch is
+    # validated as a whole, one uppercase name failed every file beside it.
+    # The extension is stored lower-cased so a.txt and A.TXT cannot become two
+    # documents for the same content.
+    if not filename.lower().endswith(".txt"):
         raise ValueError(f"Only .txt files are supported — '{upload.filename}' isn't one.")
+    filename = filename[:-4] + ".txt"
     try:
         content = upload.read().decode("utf-8")
     except UnicodeDecodeError:
