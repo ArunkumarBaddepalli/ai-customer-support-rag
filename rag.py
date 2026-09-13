@@ -71,10 +71,22 @@ _cache_lock = threading.Lock()
 _build_locks = {}
 
 
+_embedder_lock = threading.Lock()
+
+
 def _get_embedder():
+    """The embedding model, loaded once.
+
+    Locked because app.py now pre-warms it from a background thread at boot
+    while the first request may arrive at the same moment. Without the lock
+    both would construct a SentenceTransformer — two copies of the model,
+    transiently, on an instance sized for one.
+    """
     global _embedder
     if _embedder is None:
-        _embedder = SentenceTransformer(EMBED_MODEL)
+        with _embedder_lock:
+            if _embedder is None:
+                _embedder = SentenceTransformer(EMBED_MODEL)
     return _embedder
 
 
