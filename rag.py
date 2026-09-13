@@ -480,13 +480,41 @@ def ask(question, tenant):
 
 OUTCOMES = ("ANSWERED", "NOANSWER", "OFFTOPIC", "CHAT")
 
+# The model writes typographic punctuation: a narrow no-break space in "7 pm",
+# a non-breaking hyphen in "peri‑peri", a curly apostrophe in "don’t". A browser
+# renders every one of them identically to the ASCII character, so nothing
+# looks wrong — but everything downstream that *compares* strings sees a
+# different byte sequence. That is how eval.py reported three failures on
+# answers that were correct, and how the one e2e check on "7 pm" went red.
+# Normalise once, at the boundary where the model's text enters the system,
+# so no caller has to remember to.
+_TYPOGRAPHY = str.maketrans({
+    "\u00a0": " ", "\u2009": " ", "\u202f": " ",   # no-break, thin, narrow no-break space
+    "\u2010": "-", "\u2011": "-", "\u2012": "-",   # hyphen, non-breaking hyphen, figure dash
+    "\u2018": "'", "\u2019": "'",                  # curly single quotes
+    "\u201c": '"', "\u201d": '"',                  # curly double quotes
+})
+
+
+def normalize_text(text):
+    """ASCII spaces, hyphens and quotes in place of their typographic twins.
+
+    Words are untouched; only the punctuation a keyboard would have produced
+    is restored. Dashes (en, em) are left alone — they are real typography,
+    not a look-alike for something else.
+    """
+    return text.translate(_TYPOGRAPHY)
+
 
 def _split_outcome(raw):
     """Strip the trailing outcome label off the model's reply.
 
     Returns (clean_answer, outcome). If the label is missing we fall back to
     CHAT, which neither cites a document nor logs a gap — the safe default.
+    The text is normalised first, so the label check and every caller see
+    plain punctuation.
     """
+    raw = normalize_text(raw)
     lines = raw.rstrip().splitlines()
     if not lines:
         return raw, "CHAT"
