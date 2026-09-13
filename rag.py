@@ -266,25 +266,38 @@ One word:"""
 
 
 def _classify_message(client, question, company_name):
-    """CHAT / OFFTOPIC / QUESTION for messages retrieval couldn't answer."""
+    """CHAT / OFFTOPIC / QUESTION for messages retrieval couldn't answer.
+
+    Goes through _complete_with_retry, the same path as the answer itself,
+    for two reasons that were both live bugs:
+
+    A hardcoded max_tokens=5 was enough for a one-word label on the original
+    model. gpt-oss is a reasoning model and spends the completion budget on
+    hidden reasoning *before* the visible text, so with 5 tokens it returned
+    content='' with finish_reason='length' — every single time. Every call
+    fell through to the CHAT fallback below, is_gap was never True, and no
+    low-similarity business question ever reached the Unanswered dashboard.
+    "is there parking" was answered correctly with "I don't have that" and
+    then vanished. _model_kwargs() already carries the per-family budget.
+
+    It also had no retry, so under the same 429 burst the answer call
+    survives (honouring Retry-After), the classifier failed and — again —
+    silently returned CHAT.
+    """
+    prompt = CLASSIFY_PROMPT.format(company=company_name, message=question)
+    label = ""
     try:
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{
-                "role": "user",
-                "content": CLASSIFY_PROMPT.format(company=company_name, message=question),
-            }],
-            temperature=0,
-            max_tokens=5,
-        )
-        label = response.choices[0].message.content.strip().upper()
+        response = _complete_with_retry(client, prompt, attempts=3)
+        label = (response.choices[0].message.content or "").strip().upper()
         for known in ("CHAT", "OFFTOPIC", "QUESTION"):
             if known in label:
                 return known
     except Exception as exc:
         print(f"[rag] classify failed: {type(exc).__name__}: {exc}")
     # Unsure? Treat it as small talk. Logging a false gap is worse than missing
-    # one — a dashboard full of "hi" is what makes the list useless.
+    # one — a dashboard full of "hi" is what makes the list useless. But say
+    # so: this fallback ran silently for weeks while the feature was dead.
+    print(f"[rag] classify fell back to CHAT (label was {label[:40]!r})")
     return "CHAT"
 
 

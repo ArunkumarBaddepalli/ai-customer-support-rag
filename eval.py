@@ -12,6 +12,10 @@ guessing from the wording:
               and none of the phrases it must never say.
     CHAT    - small talk or abuse: replies conversationally, never with the
               "I don't know" refusal, and never with a citation.
+    GAP     - a question about the business the documents do not cover:
+              outcome NOANSWER and answered=False, so it reaches the owner's
+              Unanswered dashboard. This is the case the classifier bug hid —
+              every such question was silently filed as small talk.
 
 Earlier versions matched only on keywords, which measured the model's
 phrasing rather than its behaviour: a correct refusal worded "I can't help
@@ -35,7 +39,7 @@ import db
 import rag
 import seed_demo
 
-FACT, REFUSE, CHAT = "FACT", "REFUSE", "CHAT"
+FACT, REFUSE, CHAT, GAP = "FACT", "REFUSE", "CHAT", "GAP"
 
 # (question, keywords that must appear (any), expected kind)
 TEST_CASES = [
@@ -75,6 +79,12 @@ TEST_CASES = [
     ("Can I book a hotel room through you?", [], REFUSE),
     ("What is the capital of France?", [], REFUSE),
     ("Should I invest in bitcoin?", [], REFUSE),
+    # About the business, absent from the FAQ, and worded nothing like it so
+    # retrieval scores below the threshold. Must be logged as a gap: this is
+    # the branch where the classifier always returned CHAT.
+    ("Is there parking available?", [], GAP),
+    ("Can I book a table for a birthday party?", [], GAP),
+    ("Do you have vegan cheese?", [], GAP),
     # Small talk: must respond conversationally, NOT with the "I don't know" refusal
     ("hi", ["help", "hi", "hello"], CHAT),
     ("how are you", ["help", "good", "great", "well"], CHAT),
@@ -132,6 +142,13 @@ def judge(question, keywords, kind, result):
             return "claimed to answer from the documents"
         if sources:
             return f"a refusal must not cite a document, got {sources}"
+    elif kind == GAP:
+        if outcome != "NOANSWER":
+            return f"outcome {outcome}, expected NOANSWER"
+        if result.get("answered", True):
+            return "marked answered, so the owner would never see it in Unanswered"
+        if sources:
+            return f"a gap must not cite a document, got {sources}"
     elif kind == CHAT:
         if any(m in answer for m in REFUSAL_MARKERS):
             return "small talk answered with a refusal"

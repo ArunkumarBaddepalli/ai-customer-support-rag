@@ -263,7 +263,9 @@ print("\n5. CUSTOMER — chatting with Acme Books")
 if not LLM:
     for _name in ("answers from docs", "answers price", "uses the new document",
                   "greets", "cites sources", "refuses what docs don't cover",
-                  "no bogus citation on refusal", "off-topic stays in scope",
+                  "no bogus citation on refusal",
+                  "low-similarity business question gets an honest answer",
+                  "off-topic stays in scope",
                   "escalates to a real person", "stays calm under abuse",
                   "isolation: neither bot answers the other's question"):
         skip("customer", _name)
@@ -289,6 +291,14 @@ else:
   check("customer", "refuses what docs don't cover",
         "acme" in ans or "don't" in ans or "not" in ans, data.get("answer", ""))
   check("customer", "no bogus citation on refusal", not data.get("sources"), str(data.get("sources")))
+  time.sleep(1.5)
+
+  # Worded nothing like the bookshop's documents, so retrieval finds nothing
+  # and the classifier alone decides whether this is a gap. It used to say
+  # CHAT every time, so the question was answered honestly and then lost.
+  code, data = ask(SLUG_A, "is there parking at your store")
+  check("customer", "low-similarity business question gets an honest answer",
+        code == 200 and not data.get("sources"), data.get("answer", ""))
   time.sleep(1.5)
 
   code, data = ask(SLUG_A, "what is the capital of France")
@@ -363,12 +373,15 @@ check("gaps", "the page loads for the owner", code == 200, f"got {code}")
 if not LLM:
     # Which questions land here is decided by the LLM's own classification, so
     # with no key there is nothing to assert about the contents.
-    for _name in ("logs the real gap", "does not log greetings",
-                  "does not log off-topic trivia", "mark done works"):
+    for _name in ("logs the real gap", "logs a low-similarity business question",
+                  "does not log greetings", "does not log off-topic trivia",
+                  "mark done works"):
         skip("gaps", _name)
 else:
     check("gaps", "logs the real gap", "laptops" in html.lower(),
           "expected 'do you sell laptops'")
+    check("gaps", "logs a low-similarity business question", "parking" in html.lower(),
+          "expected 'is there parking at your store' — classifier fell back to CHAT?")
     check("gaps", "does not log greetings", ">hi<" not in html)
     check("gaps", "does not log off-topic trivia", "capital of France" not in html)
 

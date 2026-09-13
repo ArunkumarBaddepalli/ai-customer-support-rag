@@ -85,7 +85,7 @@ jobs:
         # rather than failing on a working app.
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          EVAL_MIN_CORRECT: "40"
+          EVAL_MIN_CORRECT: "43"
         run: |
           if [ -z "$GROQ_API_KEY" ]; then
             echo "GROQ_API_KEY secret not set — answer-quality suite skipped"; exit 0
