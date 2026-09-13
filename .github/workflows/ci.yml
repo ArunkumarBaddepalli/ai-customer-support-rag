@@ -1,0 +1,97 @@
+name: CI
+
+# Both suites were run by hand, which is how a check asserting against a path
+# from an old machine survived for weeks: it failed on every run, and it was
+# the assertion proving a path-traversal attempt had not deleted anything.
+# Nothing catches that except something that runs every time.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"      # matches the Dockerfile
+          cache: pip
+
+      - name: Install the CPU-only torch build first
+        # PyPI's default Linux wheel is the CUDA build: ~2.3 GB of NVIDIA
+        # libraries that cannot execute here. Installing the CPU wheel first
+        # means nothing downstream pulls the other one in.
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Byte-compile everything
+        # Catches a syntax error in a file no test happens to import.
+        run: python -m compileall -q app.py db.py rag.py ingest.py mailer.py security.py seed_demo.py eval.py tests/
+
+      - name: Unit tests
+        # Pure functions — chunking, outcome parsing, text normalisation, slug
+        # and redirect checks — run in seconds with no server, no database and
+        # no LLM key, so a broken one is reported before the app even starts.
+        run: python -m pytest -q tests/test_units.py
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2
+
+      - name: Seed the demo workspace
+        # No DATABASE_URL, so this runs against a throwaway SQLite file.
+        env:
+          SECRET_KEY: ci-secret-not-used-anywhere-real
+        run: python seed_demo.py
+
+      - name: Start the app
+        env:
+          SECRET_KEY: ci-secret-not-used-anywhere-real
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FLASK_DEBUG: "false"
+        run: |
+          python app.py > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:5001/ && exit 0
+            sleep 2
+          done
+          echo "app did not start:"; cat server.log; exit 1
+
+      - name: End-to-end suite
+        # Without a GROQ_API_KEY secret the answer-quality checks are skipped
+        # and reported as skipped — everything else still runs. Add the secret
+        # to the repository to get the full 128.
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python tests/e2e.py
+
+      - name: Answer-quality suite
+        # eval.py is the suite that caught the Retry-After regression (41 -> 30)
+        # while e2e stayed green — e2e asserts that an answer arrives, eval
+        # asserts what it says. Without the key it is skipped with a message
+        # rather than failing on a working app.
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          EVAL_MIN_CORRECT: "40"
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "GROQ_API_KEY secret not set — answer-quality suite skipped"; exit 0
+          fi
+          python eval.py
+
+      - name: Server log on failure
+        if: failure()
+        run: cat server.log
