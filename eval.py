@@ -1,71 +1,93 @@
 """
 Measure how accurate the bot is against a fixed set of test questions.
 
-Each test case has a question and one or more keywords that MUST appear in
-the answer for it to count as correct. This is a simple but honest way to
-score a RAG bot without needing a human to grade every run.
+Every case names the *kind* of reply it expects, and the check reads the
+outcome label the bot already attaches to its own answer rather than
+guessing from the wording:
+
+    FACT    - answered from the documents: the right keyword is present, the
+              outcome is ANSWERED, and a source is cited.
+    REFUSE  - a question the bot must not answer (off-topic, or about the
+              business but not in the documents): not ANSWERED, no citation,
+              and none of the phrases it must never say.
+    CHAT    - small talk or abuse: replies conversationally, never with the
+              "I don't know" refusal, and never with a citation.
+
+Earlier versions matched only on keywords, which measured the model's
+phrasing rather than its behaviour: a correct refusal worded "I can't help
+with that" failed because the keyword list expected "not sure", and a correct
+"peri-peri" failed because the model typed a non-breaking hyphen. Text is
+normalised before matching and refusals are judged by outcome, so a passing
+run means the bot did the right thing, not that it said the expected words.
 
 Runs against the Pizza Palace demo workspace, so seed it first:
     python seed_demo.py
     python eval.py
+
+Set EVAL_MIN_CORRECT (e.g. 40) to exit non-zero below that score — used by
+CI so a quality regression fails the build instead of scrolling past.
 """
+
+import os
+import sys
 
 import db
 import rag
 import seed_demo
 
+FACT, REFUSE, CHAT = "FACT", "REFUSE", "CHAT"
+
+# (question, keywords that must appear (any), expected kind)
 TEST_CASES = [
-    ("What time do you open?", ["11"]),
-    ("What time do you close?", ["11"]),
-    ("Are you open on public holidays?", ["holiday"]),
-    ("Does the kitchen close before the restaurant?", ["30"]),
-    ("What pizza flavors do you have?", ["margherita"]),
-    ("Do you have a paneer pizza?", ["peppy paneer"]),
-    ("What sizes do pizzas come in?", ["small"]),
-    ("What sides do you serve besides pizza?", ["garlic bread"]),
-    ("What dips are available?", ["peri-peri"]),
-    ("How much is a small Margherita?", ["149"]),
-    ("How much is a large Farmhouse?", ["399"]),
-    ("What's the price of a medium Chicken Tikka?", ["379"]),
-    ("How much does garlic bread cost?", ["99"]),
-    ("How much is a cold drink?", ["49"]),
-    ("What is the delivery radius?", ["7"]),
-    ("How long does delivery take?", ["30", "40"]),
-    ("Is delivery free?", ["399"]),
-    ("What's the delivery fee?", ["40"]),
-    ("Can I track my order?", ["track"]),
-    ("What payment methods do you accept?", ["upi"]),
-    ("Can I pay in installments?", ["not accepted", "no", "cannot"]),
-    ("My order arrived cold, what do I do?", ["30 minutes"]),
-    # Accepts either an explicit "no" or the equivalent "refunds are only for X"
-    ("Can I get a refund if I just change my mind?", ["cannot", "no", "not", "only"]),
-    ("How late can I report a damaged order?", ["2 hours"]),
-    ("Can I cancel my order?", ["5 minutes"]),
-    ("Do you have any offers?", ["tuesday"]),
-    ("Is there a student discount?", ["15%"]),
-    ("How do I contact support?", ["98765"]),
-    ("What are support hours?", ["10"]),
-    # Off-topic: must refuse rather than answer from the model's own world knowledge
-    ("Do you sell laptops?", ["not sure", "don't know", "only", "contact"]),
-    ("Can I book a hotel room through you?", ["not sure", "don't know", "only", "contact"]),
-    ("What is the capital of France?", ["only", "don't know", "not sure"]),
-    ("Should I invest in bitcoin?", ["only", "don't know", "not sure"]),
+    ("What time do you open?", ["11"], FACT),
+    ("What time do you close?", ["11"], FACT),
+    ("Are you open on public holidays?", ["holiday"], FACT),
+    ("Does the kitchen close before the restaurant?", ["30"], FACT),
+    ("What pizza flavors do you have?", ["margherita"], FACT),
+    ("Do you have a paneer pizza?", ["peppy paneer"], FACT),
+    ("What sizes do pizzas come in?", ["small"], FACT),
+    ("What sides do you serve besides pizza?", ["garlic bread"], FACT),
+    ("What dips are available?", ["peri-peri"], FACT),
+    ("How much is a small Margherita?", ["149"], FACT),
+    ("How much is a large Farmhouse?", ["399"], FACT),
+    ("What's the price of a medium Chicken Tikka?", ["379"], FACT),
+    ("How much does garlic bread cost?", ["99"], FACT),
+    ("How much is a cold drink?", ["49"], FACT),
+    ("What is the delivery radius?", ["7"], FACT),
+    ("How long does delivery take?", ["30", "40"], FACT),
+    ("Is delivery free?", ["399"], FACT),
+    ("What's the delivery fee?", ["40"], FACT),
+    ("Can I track my order?", ["track"], FACT),
+    ("What payment methods do you accept?", ["upi"], FACT),
+    ("Can I pay in installments?", ["not accepted", "no", "cannot", "can't"], FACT),
+    ("My order arrived cold, what do I do?", ["30 minutes"], FACT),
+    # Accepts an explicit "no" or the equivalent "refunds are only for X"
+    ("Can I get a refund if I just change my mind?", ["cannot", "can't", "no", "not", "only"], FACT),
+    ("How late can I report a damaged order?", ["2 hours"], FACT),
+    ("Can I cancel my order?", ["5 minutes"], FACT),
+    ("Do you have any offers?", ["tuesday"], FACT),
+    ("Is there a student discount?", ["15%"], FACT),
+    ("How do I contact support?", ["98765"], FACT),
+    ("What are support hours?", ["10"], FACT),
+    # Off-topic: must refuse rather than answer from the model's own world
+    # knowledge. Judged by outcome, not by which refusal phrase it chose.
+    ("Do you sell laptops?", [], REFUSE),
+    ("Can I book a hotel room through you?", [], REFUSE),
+    ("What is the capital of France?", [], REFUSE),
+    ("Should I invest in bitcoin?", [], REFUSE),
     # Small talk: must respond conversationally, NOT with the "I don't know" refusal
-    ("hi", ["help", "hi", "hello"]),
-    ("how are you", ["help", "good", "great", "well"]),
-    ("thanks!", ["welcome", "help", "glad"]),
-    ("who are you", ["assistant", "support", "help"]),
+    ("hi", ["help", "hi", "hello"], CHAT),
+    ("how are you", ["help", "good", "great", "well"], CHAT),
+    ("thanks!", ["welcome", "help", "glad"], CHAT),
+    ("who are you", ["assistant", "support", "help"], CHAT),
     # Abuse / frustration: must de-escalate and offer a human, never greet or argue
-    ("idiot", ["98765", "support@", "help"]),
-    ("this is useless", ["98765", "support@", "help"]),
-    ("you are the worst bot ever", ["98765", "support@", "help"]),
-    ("I want to talk to a human", ["98765", "support@"]),
+    ("idiot", ["98765", "support@", "help"], CHAT),
+    ("this is useless", ["98765", "support@", "help"], CHAT),
+    ("you are the worst bot ever", ["98765", "support@", "help"], CHAT),
+    ("I want to talk to a human", ["98765", "support@"], CHAT),
 ]
 
-# Small talk must never trigger the can't-help fallback — checked separately
-# because a reply can contain "help" while still being a refusal.
-MUST_NOT_REFUSE = {"hi", "how are you", "thanks!", "who are you"}
-REFUSAL_MARKERS = ("not sure about that", "don't know")
+REFUSAL_MARKERS = ("not sure about that", "don't know", "don't have that information")
 
 # Phrases that must not appear in specific replies.
 MUST_NOT_CONTAIN = {
@@ -88,31 +110,52 @@ def _demo_tenant():
     return tenant
 
 
+def judge(question, keywords, kind, result):
+    """Why a case failed, or None if it passed."""
+    answer = rag.normalize_text(result["answer"]).lower()
+    outcome = result.get("outcome")
+    sources = result.get("sources") or []
+
+    if keywords and not any(k.lower() in answer for k in keywords):
+        return f"none of {keywords} in the answer"
+    for banned in MUST_NOT_CONTAIN.get(question, []):
+        if banned in answer:
+            return f"must not contain {banned!r}"
+
+    if kind == FACT:
+        if outcome != "ANSWERED":
+            return f"outcome {outcome}, expected ANSWERED"
+        if not sources:
+            return "answered from the documents but cited nothing"
+    elif kind == REFUSE:
+        if outcome == "ANSWERED":
+            return "claimed to answer from the documents"
+        if sources:
+            return f"a refusal must not cite a document, got {sources}"
+    elif kind == CHAT:
+        if any(m in answer for m in REFUSAL_MARKERS):
+            return "small talk answered with a refusal"
+        if sources:
+            return f"small talk must not cite a document, got {sources}"
+    return None
+
+
 def run_eval(verbose=False):
     tenant = _demo_tenant()
     correct = 0
     failures = []
 
-    for question, keywords in TEST_CASES:
+    for question, keywords, kind in TEST_CASES:
         result = rag.ask(question, tenant)
-        answer_lower = result["answer"].lower()
-        hit = any(k.lower() in answer_lower for k in keywords)
-
-        if question in MUST_NOT_REFUSE and any(m in answer_lower for m in REFUSAL_MARKERS):
-            hit = False  # small talk answered with a refusal = fail
-
-        banned = MUST_NOT_CONTAIN.get(question, [])
-        if any(b in answer_lower for b in banned):
-            hit = False  # leaked world knowledge instead of staying in scope
-
-        if hit:
+        why = judge(question, keywords, kind, result)
+        if why is None:
             correct += 1
         else:
-            failures.append((question, result["answer"], keywords))
-
+            failures.append((question, result, kind, why))
         if verbose:
-            mark = "PASS" if hit else "FAIL"
-            print(f"[{mark}] {question}\n       -> {result['answer']}")
+            mark = "PASS" if why is None else "FAIL"
+            print(f"[{mark}] {question}\n       -> {result['answer']}"
+                  f"  [{result.get('outcome')}; sources={result.get('sources')}]")
 
     total = len(TEST_CASES)
     accuracy = correct / total * 100
@@ -120,11 +163,15 @@ def run_eval(verbose=False):
 
     if failures:
         print("\nFailed cases:")
-        for question, answer, keywords in failures:
-            print(f" - Q: {question}")
-            print(f"   expected one of: {keywords}")
-            print(f"   got: {answer}")
+        for question, result, kind, why in failures:
+            print(f" - Q: {question}  [{kind}]")
+            print(f"   why: {why}")
+            print(f"   got: {result['answer']}")
 
+    minimum = os.environ.get("EVAL_MIN_CORRECT", "").strip()
+    if minimum and correct < int(minimum):
+        print(f"\nBelow the required {minimum}/{total} — failing.")
+        sys.exit(1)
     return accuracy
 
 
