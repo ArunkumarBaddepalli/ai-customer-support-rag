@@ -239,10 +239,28 @@ SHARED_RULES = (
 # Asking the model to label its own outcome beats guessing from its wording,
 # which varies every run. The options are branch-specific on purpose: listing
 # ANSWERED when no context exists made the model pick it every time.
+# ANSWERED spells out two cases the model was getting wrong. Asked "can I get a
+# refund if I change my mind?", it replied correctly from the policy ("we can't
+# refund a change of mind once out for delivery") and labelled it NOANSWER —
+# reading its own "no" as "no answer". Asked how to contact support, it gave
+# the number from the Contact section and labelled that NOANSWER too, because
+# "here is the support contact" is also what the fallback says. Asked what to
+# do about a cold order, it gave the procedure from the returns policy and
+# labelled that NOANSWER as well. So the rule is now stated by the one thing
+# that separates them: NOANSWER means you said you don't have the information;
+# anything drawn from the context is ANSWERED. The mislabels
+# had a product cost: the correct answer went out uncited, and a question the
+# FAQ answers was logged on the owner's gaps dashboard as missing. Found by
+# eval.py once it started reading the label instead of matching phrases.
 MARKER_WITH_CONTEXT = (
     "After your reply, on a new line, write exactly ONE of these words:\n"
-    "  ANSWERED  - you answered using the context above\n"
-    "  NOANSWER  - a question about this business the context did not answer\n"
+    "  ANSWERED  - the facts in your reply came from the context above: a yes, a no, "
+    "a price, a time, a procedure. Also when they asked how to contact the business "
+    "and you gave the contact details from the context - that is an answer, not a "
+    "fallback.\n"
+    "  NOANSWER  - they asked about this business, the context does not cover it, and "
+    "you told them you don't have that information. Pointing them to support in that "
+    "case is still NOANSWER.\n"
     "  OFFTOPIC  - the message had nothing to do with this business\n"
     "  CHAT      - a greeting, pleasantry, complaint or insult\n"
 )
@@ -304,6 +322,12 @@ def _classify_message(client, question, company_name):
         for known in ("CHAT", "OFFTOPIC", "QUESTION"):
             if known in label:
                 return known
+        # Offered three words, the model sometimes answers with a finer one it
+        # was not given — "INSULT" for "idiot" — which is a CHAT by our rules.
+        if any(w in label for w in ("GREET", "THANK", "INSULT", "COMPLAIN", "PLEASANT", "SMALL")):
+            return "CHAT"
+        if any(w in label for w in ("TRIVIA", "UNRELATED", "GENERAL")):
+            return "OFFTOPIC"
     except Exception as exc:
         print(f"[rag] classify failed: {type(exc).__name__}: {exc}")
     # Unsure? Treat it as small talk. Logging a false gap is worse than missing
