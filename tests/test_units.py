@@ -242,6 +242,10 @@ class TestSmallTalk:
         answer, _ = rag.smalltalk_answer("who are you", "Acme", "help@acme.test", "Fees")
         assert "help@acme.test" in answer
 
+    def test_expand_shorthand_only_when_present(self):
+        assert rag.expand_shorthand("wat r ur timings") == "what are your timings"
+        assert rag.expand_shorthand("How much is a cold drink?") is None
+
     def test_normalise_expands_shorthand(self):
         assert rag.normalise_message("Wt is. UR job??") == "what is your job"
 
@@ -271,6 +275,17 @@ class TestSectionHeadings:
     def test_a_word_inside_the_answer_is_not_a_label(self):
         raw = "We chat with customers daily and answered every call."
         assert rag._split_outcome(raw) == (raw, "CHAT") and not rag._has_label(raw)
+
+    @pytest.mark.parametrize("text, refusal", [
+        ("I'm sorry, I don't have that detail. Please contact +91 98765 43210.", True),
+        ("I don't have that information.", True),
+        ("I can only help with Pizza Palace questions.", True),
+        ("We can't offer a refund for a change-of-mind cancellation once the order is out for delivery.", False),
+        ("Cold drinks cost ₹49.", False),
+        ("No, we don't deliver on public holidays.", False),
+    ])
+    def test_refusal_detection(self, text, refusal):
+        assert rag.looks_like_refusal(text) is refusal
 
     def test_labels_get_chat_and_offtopic_through(self):
         assert rag._has_label("Sure.\nCHAT") and rag._has_label("No.\n**OFFTOPIC**")
