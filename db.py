@@ -669,7 +669,7 @@ def save_document(tenant_id, filename, content):
 def get_documents(tenant_id):
     with connection() as cur:
         return cur.execute(
-            "SELECT filename, content FROM documents WHERE tenant_id = ? ORDER BY filename",
+            "SELECT filename, content, updated_at FROM documents WHERE tenant_id = ? ORDER BY filename",
             (tenant_id,),
         ).fetchall()
 

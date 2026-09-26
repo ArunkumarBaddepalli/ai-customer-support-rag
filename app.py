@@ -551,7 +551,7 @@ def dashboard(tenant):
     return render_template(
         "dashboard.html",
         tenant=tenant,
-        documents=db.list_document_names(tenant["id"]),
+        documents=_document_summaries(tenant["id"]),
         message=message,
         error=error,
     )
@@ -668,7 +668,8 @@ def chatbot(slug):
     tenant = db.get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
-    return render_template("chat.html", tenant=tenant)
+    return render_template("chat.html", tenant=tenant,
+                           suggested=_suggested_questions(tenant["id"]))
 
 
 @app.route("/c/<slug>/logo")
@@ -853,6 +854,67 @@ def _handle_logo_fields(tenant):
     db.save_logo(tenant["id"], data, MIME_TYPES[ext])
 
 
+HEADING_RE = re.compile(r"^([A-Z][^:\n]{2,60}):\s*$")
+
+
+def _section_headings(content):
+    """The 'Topic:' lines a document is organised by, in order."""
+    lines = content.splitlines()
+    found = []
+    for i, line in enumerate(lines):
+        m = HEADING_RE.match(line.strip())
+        if m and i + 1 < len(lines) and lines[i + 1].strip():
+            found.append(m.group(1).strip())
+    return found
+
+
+def _document_summaries(tenant_id):
+    """What the dashboard lists per document: name, size, sections, updated.
+
+    A bare filename told an owner nothing about whether the upload took, or
+    which of two similar files was the current one.
+    """
+    rows = []
+    for doc in db.get_documents(tenant_id):
+        size = len(doc["content"].encode("utf-8"))
+        updated = (doc.get("updated_at") or "")[:16].replace("T", " ")
+        rows.append({
+            "name": doc["filename"],
+            "size": f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B",
+            "sections": max(1, len(_section_headings(doc["content"]))),
+            "updated": updated or "—",
+        })
+    return rows
+
+
+DEFAULT_SUGGESTED = [
+    "What are your opening hours?",
+    "What services do you offer?",
+    "How can I contact you?",
+]
+
+
+def _suggested_questions(tenant_id, limit=3):
+    """Opening chips built from the business's own document headings.
+
+    They were hardcoded to a restaurant — "How does delivery work?" on a
+    clinic's bot. A heading like "Booking an appointment:" is already the
+    question a customer would ask, so it is used as the chip and sent as-is;
+    retrieval matches a bare topic at least as well as a full sentence.
+    """
+    seen, chips = set(), []
+    for doc in db.get_documents(tenant_id):
+        for heading in _section_headings(doc["content"]):
+            key = heading.lower()
+            if key in seen or key in ("emergencies", "contact"):
+                continue
+            seen.add(key)
+            chips.append(heading)
+            if len(chips) == limit:
+                return chips
+    return chips or DEFAULT_SUGGESTED
+
+
 def _read_upload(upload):
     """Validate one uploaded file and return (filename, content)."""
     filename = secure_filename(upload.filename)
@@ -925,7 +987,25 @@ def not_found(_):
 
 @app.errorhandler(413)
 def too_large(_):
-    return "That file is too large (2 MB max).", 413
+    return render_template(
+        "error.html", heading="That file is too large",
+        detail="Uploads are limited to 2 MB in total. Split the document, or "
+               "paste the text in instead."), 413
+
+
+@app.errorhandler(500)
+def server_error(exc):
+    """A branded page, never a stack trace on a customer's chat page.
+
+    The traceback still goes to the log — that is where it is useful. What
+    the visitor sees is that something broke on our side and how to carry on.
+    """
+    import traceback
+    print("[error] 500:", traceback.format_exc())
+    return render_template(
+        "error.html", heading="Something went wrong on our side",
+        detail="It has been logged. Try again in a moment, and if it keeps "
+               "happening, the support contact on this page can help."), 500
 
 
 if __name__ == "__main__":

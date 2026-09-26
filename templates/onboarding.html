@@ -20,7 +20,7 @@
 
     <label>Tagline</label>
     <input type="text" name="company_tagline" value="{{ tenant.company_tagline }}"
-           placeholder="Ask me about our menu, timings, or delivery.">
+           placeholder="Ask me about our services, hours, or pricing.">
 
     <label>Logo <span class="hint-inline">(optional — your initial is used otherwise)</span></label>
     <div class="logo-picker">
@@ -38,7 +38,10 @@
     </div>
 
     <label>Brand colour</label>
-    <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
+    <div class="color-field">
+      <input type="color" name="brand_color" value="{{ tenant.brand_color }}" id="brand-color">
+      <span class="color-hex" id="brand-hex">{{ tenant.brand_color }}</span>
+    </div>
 
     <label>Support phone <span class="hint-inline">(optional)</span></label>
     <input type="tel" name="support_phone" value="{{ tenant.support_phone }}"
@@ -60,7 +63,7 @@
 
     <label>Text</label>
     <textarea name="text" rows="10"
-      placeholder="Timings:&#10;We are open 11am to 11pm every day.&#10;&#10;Delivery:&#10;Free over $30, otherwise $4."></textarea>
+      placeholder="Opening hours:&#10;Monday to Friday 9am to 6pm.&#10;&#10;Pricing:&#10;Standard plan $49 a month."></textarea>
 
     <div class="divider">— or upload one or more .txt files —</div>
     <input type="file" name="file" accept=".txt" multiple
@@ -76,6 +79,10 @@
 <script src="{{ url_for('static', filename='upload.js') }}"></script>
 
 <script>
+  const brandColor = document.getElementById("brand-color");
+  const brandHex = document.getElementById("brand-hex");
+  brandColor?.addEventListener("input", () => { brandHex.textContent = brandColor.value; });
+
   const logoInput = document.getElementById("logo-input");
   const logoPreview = document.getElementById("logo-preview");
   logoInput?.addEventListener("change", () => {

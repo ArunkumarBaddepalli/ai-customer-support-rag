@@ -40,7 +40,10 @@
     </div>
 
     <label>Brand colour</label>
-    <input type="color" name="brand_color" value="{{ tenant.brand_color }}">
+    <div class="color-field">
+      <input type="color" name="brand_color" value="{{ tenant.brand_color }}" id="brand-color">
+      <span class="color-hex" id="brand-hex">{{ tenant.brand_color }}</span>
+    </div>
 
     <h2>Support contact</h2>
     <p class="hint">
@@ -73,6 +76,10 @@
 </div>
 
 <script>
+  const brandColor = document.getElementById("brand-color");
+  const brandHex = document.getElementById("brand-hex");
+  brandColor?.addEventListener("input", () => { brandHex.textContent = brandColor.value; });
+
   // show the chosen image straight away, before saving
   const logoInput = document.getElementById("logo-input");
   const logoPreview = document.getElementById("logo-preview");

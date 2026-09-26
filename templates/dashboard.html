@@ -13,9 +13,11 @@
     <ul class="doc-list">
       {% for doc in documents %}
         <li>
-          <span>{{ doc }}</span>
-          <form method="post" action="{{ url_for('delete_document', name=doc) }}"
-                onsubmit="return confirm('Delete {{ doc }}? The bot will stop using it.')">
+          <span class="doc-name">{{ doc.name }}
+            <small class="doc-meta">{{ doc.size }} · {{ doc.sections }} section{{ '' if doc.sections == 1 else 's' }} · updated {{ doc.updated }}</small>
+          </span>
+          <form method="post" action="{{ url_for('delete_document', name=doc.name) }}"
+                onsubmit="return confirm('Delete {{ doc.name }}? The bot will stop using it.')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="link-danger" type="submit">Delete</button>
           </form>
@@ -35,7 +37,7 @@
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Title</label>
-    <input type="text" name="title" placeholder="e.g. delivery-policy">
+    <input type="text" name="title" placeholder="e.g. pricing, policies, faq">
 
     <label>Text</label>
     <textarea name="text" rows="9" placeholder="Paste the FAQ or policy text here..."></textarea>
@@ -50,6 +52,17 @@
     <button type="submit">Save and re-index</button>
   </form>
 </div>
+
+{% if documents %}
+<div class="card">
+  <h2>Try your bot</h2>
+  <p class="hint">This is exactly what your customers see at
+    <a href="{{ url_for('chatbot', slug=tenant.slug) }}" target="_blank">/c/{{ tenant.slug }}</a>.
+    Ask it something your documents cover, and something they don't.</p>
+  <iframe class="try-frame" src="{{ url_for('chatbot', slug=tenant.slug) }}"
+          title="Your bot" loading="lazy"></iframe>
+</div>
+{% endif %}
 
 <script src="{{ url_for('static', filename='upload.js') }}"></script>
 {% endblock %}
