@@ -117,6 +117,10 @@ jobs:
           # host's model changes. Groq's daily budget is per model, so this
           # also keeps CI off the budget of a model production has moved on from.
           GROQ_MODEL: ${{ vars.GROQ_MODEL || 'openai/gpt-oss-120b' }}
+          # When Groq's free budget is spent, answers come from Gemini instead
+          # of failing the suite. Needs the LLM_FALLBACK_API_KEY secret.
+          LLM_FALLBACK_PROVIDER: gemini
+          LLM_FALLBACK_API_KEY: ${{ steps.scope.outputs.llm == 'true' && secrets.LLM_FALLBACK_API_KEY || '' }}
           FLASK_DEBUG: "false"
           PYTHONUNBUFFERED: "1"     # so the server log is complete when it is printed on failure
         run: |
@@ -143,6 +147,10 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_MODEL: ${{ vars.GROQ_MODEL || 'openai/gpt-oss-120b' }}
+          # When Groq's free budget is spent, answers come from Gemini instead
+          # of failing the suite. Needs the LLM_FALLBACK_API_KEY secret.
+          LLM_FALLBACK_PROVIDER: gemini
+          LLM_FALLBACK_API_KEY: ${{ steps.scope.outputs.llm == 'true' && secrets.LLM_FALLBACK_API_KEY || '' }}
           EVAL_MIN_CORRECT: "52"   # 53 cases; one documented miss tolerated
         run: |
           if [ -z "$GROQ_API_KEY" ]; then

@@ -13,6 +13,7 @@ import threading
 from collections import OrderedDict
 
 import faiss
+import httpx
 import numpy as np
 from dotenv import load_dotenv
 
@@ -50,6 +51,22 @@ MAX_RETRY_WAIT_SECONDS = 8.0
 # cosine similarity below this = no usable context, so the LLM is told to answer
 # without inventing business facts (small talk is fine, made-up prices are not)
 MIN_SIMILARITY = 0.20
+
+# A second, independent provider for when Groq's free tier says no. Groq caps
+# a free organisation at 8,000 tokens a minute and 200,000 a day per model,
+# shared by everything that uses the key; one busy afternoon of tests left the
+# hosted bot answering "I can't answer right now" to every customer. Gemini's
+# free tier is a separate budget from a separate company - no card, no
+# terms bent. Configured entirely by environment; absent, nothing changes.
+FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "").strip().lower()
+FALLBACK_API_KEY = os.getenv("LLM_FALLBACK_API_KEY", "").strip()
+# The "-latest" alias, not a dated model: Google retired gemini-2.5-flash-lite
+# for new accounts the same month this was written, and Groq retired a model
+# under this app once before. An alias survives that; a pinned name does not.
+FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "gemini-flash-lite-latest").strip()
+# For tests and evals: skip Groq entirely and answer from the fallback.
+FORCE_FALLBACK = os.getenv("LLM_FORCE_FALLBACK", "").strip().lower() in ("1", "true", "yes")
+GEMINI_OPENAI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 _embedder = None
 _groq_client = None
@@ -561,6 +578,37 @@ def _model_kwargs():
     return {"max_tokens": 300}
 
 
+class _Completion:
+    """The two attributes of an OpenAI-style response that ask() reads."""
+
+    def __init__(self, content):
+        from types import SimpleNamespace as NS
+        self.choices = [NS(message=NS(content=content))]
+        self.usage = None
+
+
+def fallback_ready():
+    return FALLBACK_PROVIDER == "gemini" and bool(FALLBACK_API_KEY)
+
+
+def _fallback_complete(prompt, max_tokens=400):
+    """One completion from the fallback provider, shaped like Groq's.
+
+    Gemini exposes an OpenAI-compatible endpoint, so the request is the same
+    JSON. reasoning_effort is not sent - it is a gpt-oss knob.
+    """
+    r = httpx.post(
+        GEMINI_OPENAI_URL,
+        headers={"Authorization": f"Bearer {FALLBACK_API_KEY}"},
+        json={"model": FALLBACK_MODEL,
+              "messages": [{"role": "user", "content": prompt}],
+              "temperature": 0, "max_tokens": max_tokens},
+        timeout=LLM_TIMEOUT_SECONDS)
+    r.raise_for_status()
+    content = r.json()["choices"][0]["message"].get("content") or ""
+    return _Completion(content)
+
+
 def _complete_with_retry(client, prompt, attempts=5):
     """Call the LLM, retrying on rate limits.
 
@@ -572,6 +620,9 @@ def _complete_with_retry(client, prompt, attempts=5):
     failure a 429 the server had already told us how to survive.
     """
     import time
+
+    if FORCE_FALLBACK and fallback_ready():
+        return _fallback_complete(prompt)
 
     delay = 1.5
     for attempt in range(attempts):
@@ -586,12 +637,28 @@ def _complete_with_retry(client, prompt, attempts=5):
             )
         except Exception as exc:
             retryable = "rate_limit" in str(exc).lower() or "429" in str(exc)
-            if not retryable or attempt == attempts - 1:
+            if not retryable:
+                raise
+            # A rate limit with a fallback configured is not worth a single
+            # second of the customer's time: answer from the other provider.
+            if fallback_ready():
+                try:
+                    response = _fallback_complete(prompt)
+                    print(f"[rag] groq rate-limited (attempt {attempt + 1}); "
+                          f"answered by {FALLBACK_PROVIDER}/{FALLBACK_MODEL}")
+                    return response
+                except Exception as fexc:
+                    print(f"[rag] {FALLBACK_PROVIDER} fallback failed: "
+                          f"{type(fexc).__name__}: {fexc}")
+            if attempt == attempts - 1:
                 raise
             wait = _retry_after_seconds(exc)
             if wait is None:
                 wait = min(delay, MAX_RETRY_WAIT_SECONDS)
                 delay *= 2
+            # Logged, because this sleep is exactly the "very slow answers"
+            # that nothing else in the system could explain.
+            print(f"[rag] groq 429 - waiting {wait:.1f}s (attempt {attempt + 1}/{attempts})")
             time.sleep(wait)
 
 

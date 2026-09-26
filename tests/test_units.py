@@ -290,3 +290,32 @@ class TestSectionHeadings:
     def test_labels_get_chat_and_offtopic_through(self):
         assert rag._has_label("Sure.\nCHAT") and rag._has_label("No.\n**OFFTOPIC**")
         assert not rag._has_label("Just an answer with no label")
+
+
+# ------------------------------------------------------------- fallback
+
+class TestFallback:
+    def test_not_ready_without_provider_and_key(self, monkeypatch):
+        monkeypatch.setattr(rag, "FALLBACK_PROVIDER", "")
+        monkeypatch.setattr(rag, "FALLBACK_API_KEY", "x")
+        assert not rag.fallback_ready()
+        monkeypatch.setattr(rag, "FALLBACK_PROVIDER", "gemini")
+        monkeypatch.setattr(rag, "FALLBACK_API_KEY", "")
+        assert not rag.fallback_ready()
+        monkeypatch.setattr(rag, "FALLBACK_API_KEY", "k")
+        assert rag.fallback_ready()
+
+    def test_fallback_response_has_the_shape_ask_reads(self, monkeypatch):
+        class FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": "We open at 11.\nANSWERED"}}]}
+        captured = {}
+        def fake_post(url, headers, json, timeout):
+            captured.update(url=url, model=json["model"], keys=set(json)); return FakeResp()
+        monkeypatch.setattr(rag.httpx, "post", fake_post)
+        monkeypatch.setattr(rag, "FALLBACK_API_KEY", "k")
+        r = rag._fallback_complete("prompt")
+        assert r.choices[0].message.content == "We open at 11.\nANSWERED"
+        assert rag._split_outcome(r.choices[0].message.content) == ("We open at 11.", "ANSWERED")
+        assert "reasoning_effort" not in captured["keys"] and captured["url"] == rag.GEMINI_OPENAI_URL
