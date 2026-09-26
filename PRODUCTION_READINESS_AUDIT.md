@@ -150,8 +150,8 @@ Severity: **P0** blocks sharing the link · **P1** a visitor would notice · **P
 | BE-7 | **P2** | No answer cache — identical FAQ questions re-hit the LLM | — | 60-s in-process LRU on `(tenant_id, index_version, normalised question)` |
 | BE-8 | **P2** | Pre-warm loads the model but not the first `encode()` | first tenant index build 6.3 s vs 0.7 s after | `_prewarm`: `rag._get_embedder().encode(["warm"])` |
 | BE-9 | **P3** | Contact requests answer from the document rather than the configured support contact | clinic test | Either prefer Settings contact in rule 5b, or surface the doc contact in Settings as a hint |
-| BE-10 | **P2** | No 500 handler — an exception on a branded customer page returns Flask's default | `errorhandler`: 404, 413 only | Add one rendering the styled error page; log the traceback |
-| BE-11 | **P3** | 413 returns bare text | [app.py:926](app.py#L926) | Render the error template |
+| BE-10 | **P2** | No 500 handler — an exception on a branded customer page returns Flask's default | `errorhandler`: 404, 413 only | Add one rendering the styled error page; log the traceback · **FIXED (`ui-polish`, PR #2)** |
+| BE-11 | **P3** | 413 returns bare text | [app.py:926](app.py#L926) | Render the error template · **FIXED (`ui-polish`, PR #2)** |
 | BE-12 | **P2** | `.txt` only | `_read_upload` | `.md` (trivial), `.pdf` via `pypdf`, `.docx` via `python-docx` — most businesses have their FAQ as a PDF |
 | BE-13 | **P3** | Unanswered list capped at 100, no paging | [db.py:745](db.py#L745) | "Showing 100 of N" + offset |
 | BE-14 | **P3** | No `robots.txt` | — | Allow `/`, disallow `/c/`, `/dashboard` |
@@ -163,20 +163,20 @@ Severity: **P0** blocks sharing the link · **P1** a visitor would notice · **P
 
 | ID | Sev | Finding | Evidence | Fix |
 |---|---|---|---|---|
-| FE-1 | **P1** | **Dashboard overflows horizontally on a phone** — nav cut off, banner text clipped, Save button past the edge | 390 px screenshot | `app.css` has no dashboard breakpoints (only `prefers-reduced-motion`). Add `@media (max-width: 600px)`: `.wrap` padding 16px, `.topbar` padding 12px 16px, `.card` padding 18px, `.verify-banner` `flex-wrap: wrap`, `.tabs` scrollable |
-| FE-2 | **P1** | **Support phone input is unstyled** on onboarding and settings — narrow, browser default border, next to fully styled inputs | screenshots; [app.css:662](static/app.css#L662) selector lists `text, email, password, file` but not `tel` | Add `input[type="tel"]` to the selector |
-| FE-3 | **P1** | **Suggested-question chips are restaurant-specific** ("timings / delivery / refund") on every tenant's bot — wrong for a clinic, a realtor, a SaaS | [chat.html:31-33](templates/chat.html#L31-L33) hardcoded | Generate from the tenant's document section headings (first 3 `Topic:` lines), or a "Suggested questions" field in Settings |
-| FE-4 | **P2** | Copy is restaurant-flavoured elsewhere too: tagline placeholder "menu, timings, or delivery" ([onboarding.html:23](templates/onboarding.html#L23)); title placeholder "delivery-policy" ([dashboard.html:38](templates/dashboard.html#L38)) | — | Neutral placeholders: "Ask me about our services, hours, or pricing" / "e.g. faq, pricing, policies" |
-| FE-5 | **P2** | Bot answers render as one flat paragraph — newlines and lists collapse | [script.js](static/script.js) `bubble.textContent = text` | Split on `\n` into `<br>` / `<p>`; render `- ` lines as a list. No HTML from the model, keep it escaped |
-| FE-6 | **P2** | Brand colour is a full-width native colour bar; file picker is the native "Choose files / No file chosen" | onboarding + dashboard screenshots | Small swatch + hex field; styled drop-zone button (the staged list already exists) |
-| FE-7 | **P2** | Mobile chat header truncates the tagline with an ellipsis | 390 px screenshot | Two-line clamp, or hide tagline under 400 px |
-| FE-8 | **P3** | Bot avatar is a tiny emoji; the header uses the initial/logo — inconsistent | chat screenshot | Reuse the tenant logo/initial as the avatar |
+| FE-1 | ~~P1~~ | **Withdrawn 2026-09-27.** The "overflow" was a screenshot artifact: desktop headless Chrome will not shrink its window below ~500 px, so a 390 px capture shows a wider layout clipped at the edge. Re-rendered inside a true 390 px iframe, the dashboard wraps cleanly with no horizontal overflow. | iframe render, `ui-polish` | No fix needed. Small responsive tidy-ups added anyway (tabs scroll, document rows wrap, full-width buttons) |
+| FE-2 | **P1** | **Support phone input is unstyled** on onboarding and settings — narrow, browser default border, next to fully styled inputs | screenshots; [app.css:662](static/app.css#L662) selector lists `text, email, password, file` but not `tel` | Add `input[type="tel"]` to the selector · **FIXED (`ui-polish`, PR #2)** |
+| FE-3 | **P1** | **Suggested-question chips are restaurant-specific** ("timings / delivery / refund") on every tenant's bot — wrong for a clinic, a realtor, a SaaS | [chat.html:31-33](templates/chat.html#L31-L33) hardcoded | Generate from the tenant's document section headings (first 3 `Topic:` lines), or a "Suggested questions" field in Settings · **FIXED (`ui-polish`, PR #2)** |
+| FE-4 | **P2** | Copy is restaurant-flavoured elsewhere too: tagline placeholder "menu, timings, or delivery" ([onboarding.html:23](templates/onboarding.html#L23)); title placeholder "delivery-policy" ([dashboard.html:38](templates/dashboard.html#L38)) | — | Neutral placeholders: "Ask me about our services, hours, or pricing" / "e.g. faq, pricing, policies" · **FIXED (`ui-polish`, PR #2)** |
+| FE-5 | **P2** | Bot answers render as one flat paragraph — newlines and lists collapse | [script.js](static/script.js) `bubble.textContent = text` | Split on `\n` into `<br>` / `<p>`; render `- ` lines as a list. No HTML from the model, keep it escaped · **FIXED (`ui-polish`, PR #2)** |
+| FE-6 | **P2** | Brand colour is a full-width native colour bar; file picker is the native "Choose files / No file chosen" | onboarding + dashboard screenshots | Small swatch + hex field; styled drop-zone button (the staged list already exists) · **FIXED (`ui-polish`, PR #2)** |
+| FE-7 | **P2** | Mobile chat header truncates the tagline with an ellipsis | 390 px screenshot | Two-line clamp, or hide tagline under 400 px · **FIXED (`ui-polish`, PR #2)** |
+| FE-8 | **P3** | Bot avatar is a tiny emoji; the header uses the initial/logo — inconsistent | chat screenshot | Reuse the tenant logo/initial as the avatar · **FIXED (`ui-polish`, PR #2)** |
 | FE-9 | **P3** | No timestamps, no copy button, no "new conversation" on the chat page | — | Small additions; timestamps help support hand-off |
-| FE-10 | **P3** | Verify-email banner on every dashboard page, full width, amber — dominates the screen | screenshots | Slimmer single-line bar, dismissible for the session |
-| FE-11 | **P3** | Dashboard shows document names only — no size, chunk count, last updated, no preview | — | "faq.txt · 4.1 KB · 9 sections · updated 2 min ago" |
-| FE-12 | **P2** | No way to test the bot from the dashboard — owner must open a new tab | — | "Try it" panel or embedded chat on the Documents page |
-| FE-13 | **P3** | Chat page error text "Could not reach the server. Is app.py running?" is developer wording shown to customers | [script.js:89](static/script.js#L89) | "Couldn't reach the assistant — please try again" |
-| FE-14 | **P3** | Chat input has no `maxlength`; server rejects at 1,000 with an error bubble | — | `maxlength="1000"` + counter |
+| FE-10 | **P3** | Verify-email banner on every dashboard page, full width, amber — dominates the screen | screenshots | Slimmer single-line bar, dismissible for the session · **FIXED (`ui-polish`, PR #2)** |
+| FE-11 | **P3** | Dashboard shows document names only — no size, chunk count, last updated, no preview | — | "faq.txt · 4.1 KB · 9 sections · updated 2 min ago" · **FIXED (`ui-polish`, PR #2)** |
+| FE-12 | **P2** | No way to test the bot from the dashboard — owner must open a new tab | — | "Try it" panel or embedded chat on the Documents page · **FIXED (`ui-polish`, PR #2)** |
+| FE-13 | **P3** | Chat page error text "Could not reach the server. Is app.py running?" is developer wording shown to customers | [script.js:89](static/script.js#L89) | "Couldn't reach the assistant — please try again" · **FIXED (`ui-polish`, PR #2)** |
+| FE-14 | **P3** | Chat input has no `maxlength`; server rejects at 1,000 with an error bubble | — | `maxlength="1000"` + counter · **FIXED (`ui-polish`, PR #2)** |
 
 ### 5.4 Truth / docs
 
