@@ -32,7 +32,7 @@ Prior audits ([BUGFIX.md](BUGFIX.md), [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md)
 |---|---|---|
 | **1** | **Live site cold-starts in >90 seconds.** Render free tier spins down after 15 min idle; the first visitor waits 1.5+ min on a blank page. Measured: `/healthz` timed out at 90s, then answered. | They will close the tab before it loads. |
 | **2** | **Answers slow to 6–10 s after ~8 questions.** The whole platform shares one Groq free-tier key: 8,000 tokens/min, refilling at ~133 tokens/s. One answer costs ~1,000 tokens, so steady-state is **one answer every ~7 s, across all tenants**. Measured: first 9 answers 0.5–1.0 s, next 19 answers 6.1–9.7 s. This is the "very very slow" you see. | Their 5th question hangs. Looks broken. |
-| **3** | **Live site runs old code.** `main` lacks the 12 fixes (classifier, cold-start pre-warm, `.TXT`, punctuation). Live `/healthz` has no `embedder_ready`; first chat took 8.06 s. | The bugs you already fixed are still live. |
+| **3** | **Live site runs code from Aug 21 and auto-deploy is dead.** Nothing has deployed since; the open-redirect fix on `main` never went live — **the open redirect is exploitable on the hosted site today** (verified). The 12 `improvements` fixes aren't there either. See PROD-8. | A security hole you already fixed is still live. |
 | **4** | **Live demo bot cites a gym document.** `/c/pizza-palace` answers a pizza question with `sources: ["faq.txt", "nova-fitness-faq.txt"]`. Two causes: a fitness FAQ was uploaded into the pizza tenant on prod, *and* the app cites every retrieved file, not the one used (reproduced locally on a clean 2-doc tenant). | First impression: "the citations are wrong." |
 | **5** | **Signups on live never get their verification email.** Prod `/healthz` reports `mail: resend`; Resend's sandbox sender only delivers to the account owner's address ([mailer.py](mailer.py) says so). The banner nags forever. | They sign up, wait for an email that never comes. |
 
@@ -134,6 +134,8 @@ Severity: **P0** blocks sharing the link · **P1** a visitor would notice · **P
 | PROD-5 | **P1** | Shared 8K-TPM Groq key for every tenant | headers above | §3.1 levers + second free provider fallback (§8) |
 | PROD-6 | **P2** | CI only fires on `main` and PRs — `improvements` has never had a CI run | `ci.yml` `on.push.branches: [main]` | Open the PR (CI runs), or add `improvements` to the trigger |
 | PROD-7 | **P2** | README claims demo is offline | [README.md:10](README.md#L10) | Delete the sentence; link the live URL |
+| PROD-8 | **P0** | **Auto-deploy is dead and the open redirect is live.** Render's event log shows no build since 2026-08-21; the deployed commit `d1a612b` is an orphan (`main` was rebased afterwards). Four pushes to `main` on Sep 7–8, including the open-redirect fix `e750752`, never deployed. Verified on the hosted site: `POST /login?next=//evil.com` → `302 https://evil.com/` | Render API: last event 2026-08-21T12:19; `git branch --contains d1a612b` → none | Trigger a manual deploy of `main` now (Render API `POST /services/{id}/deploys`); reconnect the GitHub integration in Render, *and* add a CI step that calls the Render deploy hook on push to `main` so deploys never again depend on the app connection |
+| PROD-9 | **P3** | Two free web services on the workspace (`ai-customer-support-rag`, `vera-bot`, idle since May) share Render's 750 free hours/month | Render API | Suspend `vera-bot` so the keep-warm pinger's ~744 h fit; unset the unused `ADMIN_PASSWORD` env var while there |
 
 ### 5.2 Backend
 
