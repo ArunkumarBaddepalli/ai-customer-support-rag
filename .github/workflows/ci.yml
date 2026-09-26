@@ -57,11 +57,31 @@ jobs:
           SECRET_KEY: ci-secret-not-used-anywhere-real
         run: python seed_demo.py
 
+      - name: Check the Groq key reaches the provider
+        # Prints only lengths and a status code, never the key. The first CI
+        # run failed every answer with the generic fallback and the server log
+        # showed nothing, because Python block-buffers stdout when redirected
+        # to a file; this step makes a bad or whitespace-padded secret obvious.
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os, httpx
+          k = os.environ.get("GROQ_API_KEY", "")
+          if not k:
+              print("no GROQ_API_KEY secret - answer-quality checks will be skipped"); raise SystemExit(0)
+          print(f"key length {len(k)}, stripped {len(k.strip())}, padded with whitespace: {k != k.strip()}")
+          r = httpx.get("https://api.groq.com/openai/v1/models",
+                        headers={"Authorization": f"Bearer {k.strip()}"}, timeout=30)
+          print("Groq /models:", r.status_code, "" if r.status_code == 200 else r.text[:200])
+          PY
+
       - name: Start the app
         env:
           SECRET_KEY: ci-secret-not-used-anywhere-real
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           FLASK_DEBUG: "false"
+          PYTHONUNBUFFERED: "1"     # so the server log is complete when it is printed on failure
         run: |
           python app.py > server.log 2>&1 &
           for i in $(seq 1 60); do

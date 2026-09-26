@@ -191,7 +191,10 @@ def _get_groq_client():
     global _groq_client
     if _groq_client is None:
         from groq import Groq
-        api_key = os.getenv("GROQ_API_KEY")
+        # Stripped: a secret pasted into a hosting or CI dashboard often
+        # carries a trailing newline, which makes every request fail with an
+        # invalid header and no useful error anywhere.
+        api_key = (os.getenv("GROQ_API_KEY") or "").strip()
         if not api_key:
             raise RuntimeError("GROQ_API_KEY not set. Add it to your .env file.")
         # An explicit timeout, because the default is none: a hung connection
