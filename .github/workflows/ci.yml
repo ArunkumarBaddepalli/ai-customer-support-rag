@@ -24,6 +24,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # the scope step below diffs against the base commit
 
       - uses: actions/setup-python@v5
         with:
@@ -63,7 +65,31 @@ jobs:
           SECRET_KEY: ci-secret-not-used-anywhere-real
         run: python seed_demo.py
 
+      - name: Decide whether the LLM suites need to run
+        # The answer-quality and end-to-end LLM checks make ~90 model calls
+        # and reserve ~135K tokens — two-thirds of the free tier's 200K-per-day
+        # budget, which production shares. Five runs in one afternoon left the
+        # live bot unable to answer. So the model is only called when something
+        # that could change an answer changed: retrieval, prompts, evaluation,
+        # the demo corpus, or the suite itself. Everything else (templates,
+        # CSS, JS, docs, CI) runs the suites with the model switched off, which
+        # e2e.py reports as skipped rather than passed. workflow_dispatch
+        # always runs everything.
+        id: scope
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then BASE=$(git rev-parse HEAD~1); fi
+          CHANGED=$(git diff --name-only "$BASE" HEAD)
+          printf 'changed:\n%s\n' "$CHANGED"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             || echo "$CHANGED" | grep -Eq '^(rag\.py|ingest\.py|db\.py|eval\.py|seed_demo\.py|requirements\.txt|sample_docs/|tests/e2e\.py)'; then
+            echo "llm=true"  >> "$GITHUB_OUTPUT"; echo "LLM suites: ON"
+          else
+            echo "llm=false" >> "$GITHUB_OUTPUT"; echo "LLM suites: OFF - nothing that shapes an answer changed"
+          fi
+
       - name: Check the Groq key reaches the provider
+        if: steps.scope.outputs.llm == 'true'
         # Prints only lengths and a status code, never the key. The first CI
         # run failed every answer with the generic fallback and the server log
         # showed nothing, because Python block-buffers stdout when redirected
@@ -85,7 +111,7 @@ jobs:
       - name: Start the app
         env:
           SECRET_KEY: ci-secret-not-used-anywhere-real
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY: ${{ steps.scope.outputs.llm == 'true' && secrets.GROQ_API_KEY || '' }}
           FLASK_DEBUG: "false"
           PYTHONUNBUFFERED: "1"     # so the server log is complete when it is printed on failure
         run: |
@@ -97,14 +123,14 @@ jobs:
           echo "app did not start:"; cat server.log; exit 1
 
       - name: End-to-end suite
-        # Without a GROQ_API_KEY secret the answer-quality checks are skipped
-        # and reported as skipped — everything else still runs. Add the secret
-        # to the repository to get the full 128.
+        # With the key withheld (see the scope step) the answer-quality checks
+        # are skipped and reported as skipped — everything else still runs.
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY: ${{ steps.scope.outputs.llm == 'true' && secrets.GROQ_API_KEY || '' }}
         run: python tests/e2e.py
 
       - name: Answer-quality suite
+        if: steps.scope.outputs.llm == 'true'
         # eval.py is the suite that caught the Retry-After regression (41 -> 30)
         # while e2e stayed green — e2e asserts that an answer arrives, eval
         # asserts what it says. Without the key it is skipped with a message
