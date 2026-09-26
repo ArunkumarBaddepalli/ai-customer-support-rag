@@ -659,8 +659,8 @@ form { display: flex; flex-direction: column; gap: 6px; }
 
 label { font-size: 12.5px; color: var(--body); font-weight: 500; margin-top: 10px; }
 
-input[type="text"], input[type="email"], input[type="password"],
-input[type="file"], textarea {
+input[type="text"], input[type="email"], input[type="password"], input[type="tel"],
+input[type="url"], input[type="number"], input[type="file"], textarea {
   padding: 11px 13px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -671,7 +671,20 @@ input[type="file"], textarea {
   color: var(--ink);
 }
 
-input[type="color"] { width: 100%; height: 42px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; }
+/* A compact swatch rather than a full-width bar: the native control paints the
+   whole box in the chosen colour, and at 100% width that read as a mistake. */
+.color-field { display: flex; align-items: center; gap: 10px; }
+input[type="color"] {
+  width: 46px; height: 40px; padding: 3px; flex: none;
+  border: 1px solid var(--line); border-radius: 9px; background: #fff; cursor: pointer;
+}
+.color-field .color-hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--muted); }
+input[type="file"] { padding: 8px 10px; background: var(--soft); cursor: pointer; }
+input[type="file"]::file-selector-button {
+  margin: 0 12px 0 0; padding: 7px 13px; border: 1px solid #d5d8f5; border-radius: 8px;
+  background: #fff; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+input[type="file"]::file-selector-button:hover { background: #f6f6fe; border-color: var(--accent); }
 
 textarea { resize: vertical; line-height: 1.55; }
 
@@ -834,6 +847,9 @@ button:hover { filter: brightness(1.06); }
 }
 
 .doc-list form { margin: 0; }
+.doc-name { display: flex; flex-direction: column; gap: 1px; }
+.doc-meta { font-size: 11.5px; color: var(--muted); font-weight: 400; }
+.try-frame { width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 
 .link-danger {
   background: none;
@@ -942,9 +958,31 @@ tr.done .count { background: #f1f2f4; color: var(--muted); }
   .section { padding: 46px 16px; }
   .sec-title { font-size: 24px; }
   .closer { border-radius: 0; margin-bottom: 0; padding: 46px 18px; }
-  .wrap { padding: 24px 16px 52px; }
+  .wrap { padding: 20px 14px 48px; }
   .row-2 { grid-template-columns: 1fr; }
+
+  /* dashboard */
+  .topbar nav a { padding: 7px 9px; font-size: 13.5px; }
+  .brand { font-size: 15px; }
+  .card { padding: 18px 16px; }
+  .card.narrow { margin: 22px auto; }
+  .dash-head h1 { font-size: 19px; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs a { padding: 10px 11px; white-space: nowrap; }
+  .verify-banner { font-size: 12px; }
+  .verify-banner form { width: 100%; }
+  .verify-banner button { width: 100%; }
+  .doc-list li, .staged-list li { flex-wrap: wrap; gap: 6px; }
+  .logo-picker { flex-direction: column; align-items: flex-start; }
+  th, td { padding: 8px 6px; }
 }
+
+/* Everything inside the dashboard shell must be allowed to shrink; a single
+   long email address or filename otherwise widens the whole page. */
+.wrap, .card, .dash-head, .verify-banner, .doc-list li, .doc-list li > span,
+.staged-left, .logo-actions { min-width: 0; }
+.dash-head p, .verify-banner span, .doc-list li > span { overflow-wrap: anywhere; }
 
 /* --------------------------------------------------- staged file uploads */
 /* The list of files chosen but not yet submitted. A native file input shows
@@ -992,11 +1030,14 @@ form.dragging { outline: 2px dashed var(--accent); outline-offset: 6px; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin: 0 0 18px;
-  font-size: 13px;
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  border-radius: 9px;
 }
+.verify-banner span { min-width: 0; }
 
 .verify-banner form { margin: 0; }
 
