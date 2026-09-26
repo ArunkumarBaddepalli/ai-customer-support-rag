@@ -5,10 +5,16 @@ name: CI
 # the assertion proving a path-traversal attempt had not deleted anything.
 # Nothing catches that except something that runs every time.
 
+# Documentation-only changes are skipped: the suite makes ~60 LLM calls on
+# the same free-tier key production uses, and while it runs the live bot
+# answers "can't answer right now" to real visitors. A README edit is not
+# worth ten minutes of that.
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "LICENSE", ".gitignore"]
   pull_request:
+    paths-ignore: ["**.md", "LICENSE", ".gitignore"]
   workflow_dispatch:
 
 jobs:
