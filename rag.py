@@ -8,6 +8,7 @@ small talk, abuse, and off-topic messages without inventing business facts.
 
 import os
 import pickle
+import re
 import threading
 from collections import OrderedDict
 
@@ -230,44 +231,21 @@ def search(tenant, question, top_k=TOP_K):
     return results
 
 
-SHARED_RULES = (
-    "Rules:\n"
-    "- Only say hello if the user actually greeted you. Never open with 'Hello' or "
-    "'How are you today' otherwise.\n"
-    "- Do not assume the time of day (no 'good morning'), the user's mood, or that "
-    "they have already ordered or been helped.\n"
-    "- Keep every reply under 30 words. Do not repeat the same closing line every time.\n"
+RULES = (
+    "Rules: under 30 words. Only say hello if they greeted you. Do not assume the "
+    "time of day or that they have already ordered. Do not repeat the same closing "
+    "line every time. Messages may contain typos or shorthand (wt = what, ur = your, "
+    "u = you) - interpret them generously."
 )
 
-# Asking the model to label its own outcome beats guessing from its wording,
-# which varies every run. The options are branch-specific on purpose: listing
-# ANSWERED when no context exists made the model pick it every time.
-# ANSWERED spells out two cases the model was getting wrong. Asked "can I get a
-# refund if I change my mind?", it replied correctly from the policy ("we can't
-# refund a change of mind once out for delivery") and labelled it NOANSWER —
-# reading its own "no" as "no answer". Asked how to contact support, it gave
-# the number from the Contact section and labelled that NOANSWER too, because
-# "here is the support contact" is also what the fallback says. Asked what to
-# do about a cold order, it gave the procedure from the returns policy and
-# labelled that NOANSWER as well. So the rule is now stated by the one thing
-# that separates them: NOANSWER means you said you don't have the information;
-# anything drawn from the context is ANSWERED. The mislabels
-# had a product cost: the correct answer went out uncited, and a question the
-# FAQ answers was logged on the owner's gaps dashboard as missing. Found by
-# eval.py once it started reading the label instead of matching phrases.
-MARKER_WITH_CONTEXT = (
+# The model labels its own outcome; guessing from wording varied every run.
+MARKER = (
     "After your reply, on a new line, write exactly ONE of these words:\n"
-    "  ANSWERED  - the facts in your reply came from the context above: a yes, a no, "
-    "a price, a time, a procedure. Also when they asked how to contact the business "
-    "and you gave the contact details from the context - that is an answer, not a "
-    "fallback.\n"
-    "  NOANSWER  - they asked about this business, the context does not cover it, and "
-    "you told them you don't have that information. Pointing them to support in that "
-    "case is still NOANSWER.\n"
-    "  OFFTOPIC  - the message had nothing to do with this business\n"
-    "  CHAT      - a greeting, pleasantry, complaint or insult\n"
+    "  ANSWERED  - you answered using the context\n"
+    "  NOANSWER  - a question about this business the context did not answer\n"
+    "  OFFTOPIC  - unrelated to this business\n"
+    "  CHAT      - greeting, thanks, who-are-you, unclear text, complaint or insult\n"
 )
-
 MARKER_NO_CONTEXT = ""  # classified separately — see _classify_message()
 
 
@@ -340,42 +318,51 @@ def _classify_message(client, question, company_name):
     return "CHAT"
 
 
-def build_prompt(question, results, company_name, contact, has_context):
+def build_prompt(question, results, company_name, contact, has_context, topics=""):
     """Two prompts, chosen by whether retrieval actually found anything.
 
-    They are kept separate on purpose. A single prompt that merely *mentions*
-    no documents were found still invites the model to be helpful from its own
-    knowledge — it confidently invented a gluten-free menu option that appears
-    nowhere in the documents. When there is no context the model is given no
-    room to answer at all.
+    Kept separate on purpose: a single prompt that merely *mentions* no
+    documents were found still invites the model to be helpful from its own
+    knowledge — it once invented a gluten-free menu option that appears
+    nowhere in the documents. With no context the model gets no room to
+    state a fact at all.
+
+    Both share one shape. The first line tells the model what it *can* help
+    with, so a redirect names real topics instead of a phone number: "I don't
+    have that information, call us" in reply to "am I pretty" read as broken.
+    The support contact is reserved for business questions the documents do
+    not cover, and for people asking for a person.
     """
     fallback = (
         f"tell them to contact {contact}" if contact
         else "tell them to contact support directly"
     )
+    can_help = topics or f"questions about {company_name}"
 
     if not has_context:
         return (
-            f"You are the customer-support assistant for {company_name}.\n\n"
-            f"You have NO information about {company_name} for this message. You know "
-            f"nothing about their products, prices, hours, policies or services.\n\n"
-            "You may reply in only these ways:\n"
-            "1. GREETING ('hi'): greet back in one short sentence and ask how you can help.\n"
-            "2. PLEASANTRY ('how are you', 'thanks', 'bye', 'who are you'): answer warmly "
-            "in one sentence. Do not greet them again.\n"
-            "3. FRUSTRATION OR INSULT: acknowledge it calmly in one sentence without "
-            f"taking offence, then {fallback} if they need a person. Never argue back.\n"
-            f"3b. ASKING FOR A PERSON ('talk to a human', 'speak to someone', 'contact "
-            f"support'): always {fallback}. Never brush this off.\n"
-            f"4. ANY QUESTION unrelated to {company_name} (trivia, opinions, advice): say "
-            f"you can only help with {company_name} questions. Never answer it, even "
-            "though you know the answer.\n"
-            f"5. ANY OTHER QUESTION: say you don't have that information and {fallback}.\n\n"
-            f"CRITICAL: you must NEVER state a fact about {company_name} — never confirm "
-            "or deny that they offer something, never give a price, time, or policy. "
-            "Saying 'yes we offer that' or 'no we don't do that' is forbidden. If you are "
-            "not replying to a greeting, pleasantry or insult, use case 4 or 5.\n\n"
-            f"{SHARED_RULES}\n"
+            f"You are the customer-support assistant for {company_name}. "
+            f"You can help with: {can_help}.\n\n"
+            f"You have NO information about {company_name} for this message - "
+            "nothing about its products, prices, hours, policies or services.\n\n"
+            "Reply according to what the message is:\n"
+            "- Greeting, thanks, goodbye, 'who are you', 'what can you do': one warm "
+            f"sentence; mention you can help with {can_help}. Never say you lack information.\n"
+            f"- A question about {company_name}: say you don't have that detail and {fallback}.\n"
+            "- Trying to place an order or booking: say you can't take orders in this chat "
+            f"and {fallback}.\n"
+            f"- Asking for a person: {fallback}.\n"
+            "- Frustration or insult: acknowledge it calmly in one sentence, never argue; "
+            f"offer to {fallback} if they need a person.\n"
+            f"- Anything unrelated to {company_name} (trivia, opinions, jokes, other "
+            "companies, questions about the user themselves): do not answer it. Say in one "
+            f"friendly sentence that you can only help with {company_name} - for example "
+            f"{can_help} - and invite a question. No contact details.\n"
+            "- Unclear text: interpret generously; if still unclear, ask what they'd like "
+            f"to know about {can_help}.\n\n"
+            f"CRITICAL: never state a fact about {company_name} - never confirm or deny that "
+            "they offer something, never give a price, time or policy.\n\n"
+            f"{RULES}\n"
             f"{MARKER_NO_CONTEXT}\n"
             f"User: {question}\n"
             "Assistant:"
@@ -383,34 +370,142 @@ def build_prompt(question, results, company_name, contact, has_context):
 
     context = "\n\n".join(f"[{r['source']}]\n{r['text']}" for r in results)
     return (
-        f"You are the customer-support assistant for {company_name}.\n\n"
-        "Match the user's message to ONE case and reply accordingly:\n"
-        "1. GREETING ('hi', 'good morning'): greet back in one short sentence and ask "
-        "how you can help.\n"
-        "2. PLEASANTRY ('how are you', 'thanks', 'bye', 'who are you', 'what can you "
-        "do'): answer it warmly in one sentence. Do not greet them again.\n"
-        f"3. QUESTION ABOUT {company_name.upper()} answered by the context below: answer "
-        "using ONLY that context. Short and direct.\n"
-        f"4. QUESTION ABOUT {company_name.upper()} the context does not answer: say you "
-        f"don't have that information and {fallback}. Do not fill the gap from your own "
-        "knowledge.\n"
-        "5. FRUSTRATION, INSULT, OR COMPLAINT ('this is useless', 'idiot', 'stupid'): "
-        "do not greet them and do not take offence. Acknowledge it calmly in one "
-        f"sentence, then {fallback} if they need a person. Never argue back.\n"
-        f"5b. ASKING FOR A PERSON ('talk to a human', 'speak to someone', 'contact "
-        f"support'): always {fallback}. Never brush this off.\n"
-        f"6. ANYTHING ELSE unrelated to {company_name} (trivia, opinions, advice, other "
-        "companies): do not answer it and do not give an opinion, even if you know the "
-        f"answer. Say you can only help with {company_name} questions.\n\n"
-        f"CRITICAL: every fact you state about {company_name} must appear verbatim in the "
-        "context below. Never confirm or deny that they offer something unless the "
-        "context says so.\n\n"
-        f"{SHARED_RULES}\n"
+        f"You are the customer-support assistant for {company_name}. "
+        f"You can help with: {can_help}.\n\n"
+        "Reply according to what the message is:\n"
+        "- Greeting, thanks, goodbye, 'who are you', 'what can you do': one warm "
+        f"sentence; mention you can help with {can_help}. Never say you lack information.\n"
+        f"- A question about {company_name} the context below answers: answer from the "
+        "context only, short and direct.\n"
+        f"- A question about {company_name} the context does not answer: say you don't "
+        f"have that detail and {fallback}. Do not fill the gap from your own knowledge.\n"
+        "- A bare topic or keyword ('food', 'menu', 'timings', 'delivery', 'food in "
+        f"{company_name}'): treat it as a question about that topic and answer from the "
+        "context.\n"
+        "- Asking for a suggestion or recommendation ('what should I get', 'suggest "
+        "something good'): offer one or two options that appear in the context and say "
+        "only what the context says about them. Never claim something is popular or the "
+        "best unless the context does. This counts as answered.\n"
+        "- Trying to place an order or booking ('one pizza', 'I want to order', 'book a "
+        "table'): say you can't take orders in this chat, then tell them how to order "
+        "or book *as the context describes it*, and offer the options the context "
+        f"lists. If the context doesn't say how, {fallback}.\n"
+        f"- Asking for a person: {fallback}.\n"
+        "- Frustration or insult: acknowledge it calmly in one sentence, never argue; "
+        f"offer to {fallback} if they need a person.\n"
+        f"- Anything unrelated to {company_name} (trivia, opinions, jokes, other "
+        "companies, questions about the user themselves): do not answer it. Say in one "
+        f"friendly sentence that you can only help with {company_name} - for example "
+        f"{can_help} - and invite a question. No contact details.\n"
+        "- Unclear text: interpret generously; if still unclear, ask what they'd like "
+        f"to know about {can_help}.\n\n"
+        f"CRITICAL: every fact you state about {company_name} must appear in the context "
+        "below. Never confirm or deny that they offer something unless the context says so.\n\n"
+        f"{RULES}\n\n"
         f"Context from {company_name}'s documents:\n{context}\n\n"
-        f"{MARKER_WITH_CONTEXT}\n"
+        f"{MARKER}\n"
         f"User: {question}\n"
         "Assistant:"
     )
+
+
+# ------------------------------------------------- small talk, without a model
+#
+# Greetings, thanks, goodbyes and "who are you / what can you do" are the
+# commonest messages a support bot receives and the ones the model handled
+# worst: with retrieval finding something loosely similar, it treated "wt is ur
+# job" as a business question it could not answer, replied with the support
+# phone number, and filed it as a documentation gap. These are answered here,
+# in the same voice, without a model call and without touching the token budget.
+
+_SHORTHAND = {
+    "wt": "what", "wat": "what", "wht": "what", "whats": "what is", "wats": "what is",
+    "ur": "your", "yr": "your", "u": "you", "r": "are", "ru": "are you",
+    "pls": "please", "plz": "please", "thx": "thanks", "thnx": "thanks", "ty": "thanks",
+    "hii": "hi", "hiii": "hi", "helo": "hello", "hey": "hi", "heyy": "hi", "hy": "hi",
+    "im": "i am", "dont": "do not", "cant": "cannot",
+}
+
+
+def normalise_message(text):
+    """Lower-case, punctuation dropped, common shorthand expanded."""
+    words = re.sub(r"[^a-z0-9' ]+", " ", (text or "").lower()).split()
+    return " ".join(_SHORTHAND.get(w, w) for w in words)
+
+
+_GREETING = re.compile(
+    r"^(hi|hello|hola|namaste|good (morning|afternoon|evening)|yo)( there| all| team)?( [a-z]+)?$")
+_THANKS = re.compile(
+    r"^(ok |okay |great |cool |nice |perfect |alright )?(thanks|thank you|thankyou)"
+    r"( a lot| so much| very much)?( bye)?$")
+_BYE = re.compile(r"^(ok |okay )?(bye|goodbye|good night|see you|see ya|cya|later)( bye)?$")
+_ACK = re.compile(r"^(ok|okay|k|kk|fine|sure|alright|got it|noted|cool|nice|great|good|perfect|hmm|oh|oh ok|okay then|ok then|i see|understood)( thanks)?$")
+_YES = re.compile(r"^(yes|yeah|yep|yup|ya|yaa|haa|haan|han|hmm yes|sure yes|ok yes)( please)?$")
+_NO = re.compile(r"^(no|nope|nah|no thanks|nothing|not now|no thank you)$")
+_LAUGH = re.compile(r"^(ha|haha|hahaha|lol|lmao|hehe|xd|😂|🤣)+$")
+_IDENTITY = re.compile(
+    r"^(who|what) (are|is) (you|this|your (job|role|purpose|name|work))\b"
+    r"|^what (can|do) you (do|help( me)? with|offer)\b"
+    r"|^what can i ask( you)?\b"
+    r"|^how can you help( me)?\b"
+    r"|^(help|help me)$"
+    r"|^what (is|are) you (for|about)\b"
+    r"|^are you (a |an )?(bot|robot|human|real|ai|person)\b")
+
+
+def topics_line(headings):
+    """'Timings, Menu and Prices' from a list of headings; '' when none."""
+    if not headings:
+        return ""
+    if len(headings) == 1:
+        return headings[0]
+    return ", ".join(headings[:-1]) + " and " + headings[-1]
+
+
+def smalltalk_answer(question, company_name, contact, topics):
+    """(answer, outcome) for messages that never need a model, else None."""
+    q = normalise_message(question)
+    can_help = topics or f"questions about {company_name}"
+    if _GREETING.match(q):
+        return (f"Hi! I'm the {company_name} assistant - I can help with {can_help}. "
+                "What would you like to know?", "CHAT")
+    if _THANKS.match(q):
+        return ("You're welcome! Anything else I can help with?", "CHAT")
+    if _BYE.match(q):
+        return ("Bye! Come back any time.", "CHAT")
+    if _ACK.match(q):
+        return (f"Great - anything else I can help with? I can answer questions about {can_help}.", "CHAT")
+    if _YES.match(q):
+        return (f"Sure - what would you like to know about {can_help}?", "CHAT")
+    if _NO.match(q):
+        return (f"No problem. I'm here if you need anything about {can_help}.", "CHAT")
+    if _LAUGH.match(q):
+        return (f"Glad that landed! Ask me anything about {can_help}.", "CHAT")
+    if _IDENTITY.match(q):
+        answer = (f"I'm the {company_name} assistant. I can help with {can_help} - "
+                  "ask me anything about those.")
+        if contact:
+            answer += f" If you need a person, contact {contact}."
+        return (answer, "CHAT")
+    return None
+
+
+_topics_cache = {}   # (tenant_id, index_version) -> [headings]
+
+
+def _topics_for(tenant):
+    """The tenant's document headings, cached until the documents change."""
+    import db
+    key = (tenant["id"], tenant.get("index_version", 0))
+    with _cache_lock:
+        hit = _topics_cache.get(key)
+    if hit is not None:
+        return hit
+    headings = ingest.topic_headings(tenant["id"])
+    with _cache_lock:
+        _topics_cache.clear() if len(_topics_cache) > 200 else None
+        _topics_cache[key] = headings
+    return headings
 
 
 def _retry_after_seconds(exc):
@@ -486,7 +581,17 @@ def ask(question, tenant):
     company_name = tenant.get("company_name") or "this business"
     contact = db.support_contact_line(tenant)
 
-    results = search(tenant, question)
+    topics = topics_line(_topics_for(tenant))
+
+    # Greetings, thanks, "who are you": answered here, no model, no tokens.
+    quick = smalltalk_answer(question, company_name, contact, topics)
+    if quick:
+        answer, outcome = quick
+        return {"answer": answer, "sources": [], "outcome": outcome, "answered": True}
+
+    # Search with shorthand expanded - the embedding of "wat r ur timings"
+    # lands nowhere near the timings section; "what are your timings" does.
+    results = search(tenant, normalise_message(question) or question)
     has_context = bool(results) and results[0]["score"] >= MIN_SIMILARITY
 
     prompt = build_prompt(
@@ -495,6 +600,7 @@ def ask(question, tenant):
         company_name,
         contact,
         has_context,
+        topics=topics,
     )
     try:
         client = _get_groq_client()
@@ -512,6 +618,7 @@ def ask(question, tenant):
 
     raw = response.choices[0].message.content.strip()
     answer, outcome = _split_outcome(raw)
+    labelled = _has_label(raw)
 
     if has_context:
         # Cite a document only when the model says it answered from the context —
@@ -519,6 +626,11 @@ def ask(question, tenant):
         if outcome == "ANSWERED":
             return {"answer": answer, "sources": sorted({r["source"] for r in results}),
                     "outcome": "ANSWERED", "answered": True}
+        # The model was offered CHAT and OFFTOPIC labels and the code ignored
+        # them: every non-answer with context on hand was filed as a gap, so
+        # "who are you" and "am I pretty" reached the owner's to-do list.
+        if labelled and outcome in ("CHAT", "OFFTOPIC"):
+            return {"answer": answer, "sources": [], "outcome": outcome, "answered": True}
         # Context existed but didn't cover the question: that's a real gap.
         return {"answer": answer, "sources": [], "outcome": "NOANSWER", "answered": False}
 
@@ -558,23 +670,32 @@ def normalize_text(text):
     return text.translate(_TYPOGRAPHY)
 
 
+# The label may arrive on its own line (as asked) or glued to the end of the
+# answer — gpt-oss-120b wrote "…Margherita at ₹149. ANSWERED" — and may be
+# wrapped in markdown. Either way it must never reach the customer, and the
+# answer it belongs to must be filed under the right outcome.
+_LABEL_RE = re.compile(
+    r"[\s\*_`\[\(:\-]*\b(ANSWERED|NOANSWER|OFFTOPIC|CHAT)\b[\s\*_`\]\)\.:\-]*$")
+
+
+def _has_label(raw):
+    """True when the reply ends with one of the outcome words."""
+    return bool(_LABEL_RE.search(raw or ""))
+
+
 def _split_outcome(raw):
     """Strip the trailing outcome label off the model's reply.
 
-    Returns (clean_answer, outcome). If the label is missing we fall back to
-    CHAT, which neither cites a document nor logs a gap — the safe default.
-    The text is normalised first, so the label check and every caller see
-    plain punctuation.
+    Returns (clean_answer, outcome). Typography is normalised first so that
+    nothing downstream compares a narrow no-break space against a space. If
+    the label is missing we fall back to CHAT, which neither cites a document
+    nor logs a gap — the safe default.
     """
-    raw = normalize_text(raw)
-    lines = raw.rstrip().splitlines()
-    if not lines:
+    raw = normalize_text(raw or "")
+    m = _LABEL_RE.search(raw)
+    if not m:
         return raw, "CHAT"
-
-    label = lines[-1].strip().strip("*_`[]() .:-").upper()
-    if label in OUTCOMES:
-        return "\n".join(lines[:-1]).strip(), label
-    return raw, "CHAT"
+    return raw[:m.start()].rstrip(), m.group(1)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ CLI (rebuild one tenant):
 
 import os
 import pickle
+import re
 import sys
 
 import faiss
@@ -65,6 +66,43 @@ def index_path(slug):
 
 def chunks_path(slug):
     return os.path.join(data_dir(slug), "chunks.pkl")
+
+
+HEADING_RE = re.compile(r"^([A-Z][^:\n]{2,60}):\s*$")
+
+
+def section_headings(content):
+    """The 'Topic:' lines a document is organised by, in order.
+
+    Used for the chat page's opening chips, the dashboard's section count,
+    and the "I can help with ..." line the bot uses to introduce itself.
+    """
+    lines = content.splitlines()
+    found = []
+    for i, line in enumerate(lines):
+        m = HEADING_RE.match(line.strip())
+        if m and i + 1 < len(lines) and lines[i + 1].strip():
+            found.append(m.group(1).strip())
+    return found
+
+
+# Headings that describe the document rather than something to ask about.
+_NOT_A_TOPIC = {"emergencies", "contact", "contact us", "about", "introduction"}
+
+
+def topic_headings(tenant_id, limit=4):
+    """Distinct headings across a tenant's documents, first `limit` of them."""
+    seen, out = set(), []
+    for doc in db.get_documents(tenant_id):
+        for heading in section_headings(doc["content"]):
+            key = heading.lower()
+            if key in seen or key in _NOT_A_TOPIC:
+                continue
+            seen.add(key)
+            out.append(heading)
+            if len(out) == limit:
+                return out
+    return out
 
 
 def chunk_text(text, max_size=CHUNK_SIZE):

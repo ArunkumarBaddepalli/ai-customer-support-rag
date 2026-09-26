@@ -854,18 +854,7 @@ def _handle_logo_fields(tenant):
     db.save_logo(tenant["id"], data, MIME_TYPES[ext])
 
 
-HEADING_RE = re.compile(r"^([A-Z][^:\n]{2,60}):\s*$")
-
-
-def _section_headings(content):
-    """The 'Topic:' lines a document is organised by, in order."""
-    lines = content.splitlines()
-    found = []
-    for i, line in enumerate(lines):
-        m = HEADING_RE.match(line.strip())
-        if m and i + 1 < len(lines) and lines[i + 1].strip():
-            found.append(m.group(1).strip())
-    return found
+_section_headings = ingest.section_headings
 
 
 def _document_summaries(tenant_id):
@@ -902,17 +891,7 @@ def _suggested_questions(tenant_id, limit=3):
     question a customer would ask, so it is used as the chip and sent as-is;
     retrieval matches a bare topic at least as well as a full sentence.
     """
-    seen, chips = set(), []
-    for doc in db.get_documents(tenant_id):
-        for heading in _section_headings(doc["content"]):
-            key = heading.lower()
-            if key in seen or key in ("emergencies", "contact"):
-                continue
-            seen.add(key)
-            chips.append(heading)
-            if len(chips) == limit:
-                return chips
-    return chips or DEFAULT_SUGGESTED
+    return ingest.topic_headings(tenant_id, limit) or DEFAULT_SUGGESTED
 
 
 def _read_upload(upload):

@@ -190,3 +190,88 @@ class TestSafePath:
     def test_anything_else_falls_back_to_our_own_route(self, flask_app, evil):
         with flask_app.app.test_request_context():
             assert flask_app._safe_path(evil) == "/dashboard"
+
+
+# ----------------------------------------------------------- small talk
+
+class TestSmallTalk:
+    T = "Timings, Menu and Prices"
+
+    @pytest.mark.parametrize("q", [
+        "wt is. ur job", "what is your job", "who r u", "who are you?", "what can u do",
+        "What do you do", "how can you help me", "help", "are you a bot", "whats ur role",
+    ])
+    def test_identity_questions_are_answered_without_a_model(self, q):
+        answer, outcome = rag.smalltalk_answer(q, "Pizza Palace", "", self.T)
+        assert outcome == "CHAT"
+        assert "Pizza Palace assistant" in answer and "Timings" in answer
+
+    @pytest.mark.parametrize("q, word", [
+        ("hi", "Hi!"), ("Hello there", "Hi!"), ("good morning", "Hi!"), ("hii", "Hi!"),
+        ("thanks", "welcome"), ("thank you so much", "welcome"), ("thx", "welcome"),
+        ("bye", "Bye"), ("ok bye", "Bye"),
+    ])
+    def test_greetings_thanks_and_goodbyes(self, q, word):
+        answer, outcome = rag.smalltalk_answer(q, "Pizza Palace", "", self.T)
+        assert outcome == "CHAT" and word in answer
+
+    @pytest.mark.parametrize("q", [
+        "what is your address", "what are your hours", "what is the price of a large pizza",
+        "am i pretty", "do you deliver", "who is the owner", "what do you charge for delivery",
+        "hi can i get a large pepperoni delivered", "help me find parking",
+    ])
+    def test_business_and_other_questions_go_to_the_model(self, q):
+        assert rag.smalltalk_answer(q, "Pizza Palace", "", self.T) is None
+
+    @pytest.mark.parametrize("q", ["ok", "okay", "k", "got it", "fine thanks", "oh ok", "Sure"])
+    def test_acknowledgements_get_a_nudge_not_a_refusal(self, q):
+        answer, outcome = rag.smalltalk_answer(q, "Pizza Palace", "", self.T)
+        assert outcome == "CHAT" and "anything else" in answer
+
+    @pytest.mark.parametrize("q, word", [("haa", "Sure"), ("yes", "Sure"), ("yeah", "Sure"),
+                                         ("no", "No problem"), ("nope", "No problem"), ("haha", "Glad"), ("lol", "Glad")])
+    def test_yes_no_and_laughs(self, q, word):
+        answer, outcome = rag.smalltalk_answer(q, "Pizza Palace", "", self.T)
+        assert outcome == "CHAT" and word in answer
+
+    @pytest.mark.parametrize("q", ["one pizza", "ok what are your hours", "menu", "food"])
+    def test_orders_and_topics_are_not_small_talk(self, q):
+        assert rag.smalltalk_answer(q, "Pizza Palace", "", self.T) is None
+
+    def test_identity_answer_mentions_a_person_when_contact_is_set(self):
+        answer, _ = rag.smalltalk_answer("who are you", "Acme", "help@acme.test", "Fees")
+        assert "help@acme.test" in answer
+
+    def test_normalise_expands_shorthand(self):
+        assert rag.normalise_message("Wt is. UR job??") == "what is your job"
+
+    def test_topics_line(self):
+        assert rag.topics_line([]) == ""
+        assert rag.topics_line(["Fees"]) == "Fees"
+        assert rag.topics_line(["A", "B", "C"]) == "A, B and C"
+
+
+class TestSectionHeadings:
+    DOC = "Riverside Clinic FAQ\n\nOpening hours:\nMon-Fri 8-6.\n\nFees:\nStandard $75.\n\nNot a heading: text\n\nEmpty heading:\n\nMore:\nx\n"
+
+    def test_headings_need_a_colon_and_a_following_line(self):
+        assert ingest.section_headings(self.DOC) == ["Opening hours", "Fees", "More"]
+
+    @pytest.mark.parametrize("raw, answer, label", [
+        ("The cheapest is the Small Margherita at ₹149. ANSWERED", "The cheapest is the Small Margherita at ₹149.", "ANSWERED"),
+        ("We open at 11.\nANSWERED", "We open at 11.", "ANSWERED"),
+        ("Sorry, no.\n\n**NOANSWER**", "Sorry, no.", "NOANSWER"),
+        ("Hi there! (CHAT)", "Hi there!", "CHAT"),
+        ("I can only help with Pizza Palace questions. - OFFTOPIC", "I can only help with Pizza Palace questions.", "OFFTOPIC"),
+    ])
+    def test_inline_and_decorated_labels_are_stripped(self, raw, answer, label):
+        assert rag._split_outcome(raw) == (answer, label)
+        assert rag._has_label(raw)
+
+    def test_a_word_inside_the_answer_is_not_a_label(self):
+        raw = "We chat with customers daily and answered every call."
+        assert rag._split_outcome(raw) == (raw, "CHAT") and not rag._has_label(raw)
+
+    def test_labels_get_chat_and_offtopic_through(self):
+        assert rag._has_label("Sure.\nCHAT") and rag._has_label("No.\n**OFFTOPIC**")
+        assert not rag._has_label("Just an answer with no label")
