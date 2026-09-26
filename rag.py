@@ -241,8 +241,9 @@ RULES = (
 # The model labels its own outcome; guessing from wording varied every run.
 MARKER = (
     "After your reply, on a new line, write exactly ONE of these words:\n"
-    "  ANSWERED  - you answered using the context\n"
-    "  NOANSWER  - a question about this business the context did not answer\n"
+    "  ANSWERED  - the context answered it. This includes answers that are 'no', a "
+    "policy, a procedure, a price or a suggestion drawn from the context.\n"
+    "  NOANSWER  - only when you told them you don't have that information.\n"
     "  OFFTOPIC  - unrelated to this business\n"
     "  CHAT      - greeting, thanks, who-are-you, unclear text, complaint or insult\n"
 )
@@ -427,6 +428,14 @@ _SHORTHAND = {
 }
 
 
+def expand_shorthand(text):
+    """The message with shorthand expanded, or None if there was none."""
+    words = re.sub(r"[^a-z0-9' ]+", " ", (text or "").lower()).split()
+    if not any(w in _SHORTHAND for w in words):
+        return None
+    return " ".join(_SHORTHAND.get(w, w) for w in words)
+
+
 def normalise_message(text):
     """Lower-case, punctuation dropped, common shorthand expanded."""
     words = re.sub(r"[^a-z0-9' ]+", " ", (text or "").lower()).split()
@@ -488,6 +497,19 @@ def smalltalk_answer(question, company_name, contact, topics):
             answer += f" If you need a person, contact {contact}."
         return (answer, "CHAT")
     return None
+
+
+_REFUSAL_RE = re.compile(
+    r"(don't|do not|doesn't|does not|didn't) have (that|this|any|the|those|details?|information)"
+    r"|no (information|details?) (on|about)|not sure|unable to (find|help|answer|provide)"
+    r"|(can't|cannot|can not) (help|answer|find|assist|provide)|only help with"
+    r"|(i'm|i am) not able to|not something i can|please contact|reach out to",
+    re.IGNORECASE)
+
+
+def looks_like_refusal(answer):
+    """True when the reply says it doesn't know rather than answering."""
+    return bool(_REFUSAL_RE.search(answer or ""))
 
 
 _topics_cache = {}   # (tenant_id, index_version) -> [headings]
@@ -589,9 +611,17 @@ def ask(question, tenant):
         answer, outcome = quick
         return {"answer": answer, "sources": [], "outcome": outcome, "answered": True}
 
-    # Search with shorthand expanded - the embedding of "wat r ur timings"
-    # lands nowhere near the timings section; "what are your timings" does.
-    results = search(tenant, normalise_message(question) or question)
+    # "wat r ur timings" embeds nowhere near the timings section; "what are
+    # your timings" does. But lower-casing an ordinary question also shifts
+    # its embedding - "How much is a cold drink?" fell from 0.20 to 0.18 and
+    # under the threshold - so the original text is always searched, and the
+    # expanded form only when shorthand was actually expanded.
+    results = search(tenant, question)
+    expanded = expand_shorthand(question)
+    if expanded:
+        alt = search(tenant, expanded)
+        if alt and (not results or alt[0]["score"] > results[0]["score"]):
+            results = alt
     has_context = bool(results) and results[0]["score"] >= MIN_SIMILARITY
 
     prompt = build_prompt(
@@ -631,6 +661,14 @@ def ask(question, tenant):
         # "who are you" and "am I pretty" reached the owner's to-do list.
         if labelled and outcome in ("CHAT", "OFFTOPIC"):
             return {"answer": answer, "sources": [], "outcome": outcome, "answered": True}
+        # The label is the least reliable part of the reply: on the same input
+        # the model wrote "We can't offer a refund for a change-of-mind
+        # cancellation" and filed it as NOANSWER on one run, ANSWERED on the
+        # next. A reply that does not say "I don't have that" is an answer,
+        # whatever the label says - so it is cited and not filed as a gap.
+        if outcome == "NOANSWER" and not looks_like_refusal(answer):
+            return {"answer": answer, "sources": sorted({r["source"] for r in results}),
+                    "outcome": "ANSWERED", "answered": True}
         # Context existed but didn't cover the question: that's a real gap.
         return {"answer": answer, "sources": [], "outcome": "NOANSWER", "answered": False}
 
