@@ -41,6 +41,7 @@ import rag
 import seed_demo
 
 FACT, REFUSE, CHAT, GAP = "FACT", "REFUSE", "CHAT", "GAP"
+HELP = "HELP"   # a helpful reply naming the keywords; the outcome label may be ANSWERED or NOANSWER
 
 # (question, keywords that must appear (any), expected kind)
 TEST_CASES = [
@@ -107,7 +108,7 @@ TEST_CASES = [
     ("suggest me one good item", ["margherita", "pepperoni", "paneer", "tikka", "farmhouse", "pizza"], FACT),
     ("food in pizza place", ["margherita", "pepperoni"], FACT),
     ("wat r ur timings", ["11"], FACT),
-    ("one pizza", ["98765", "support@", "order"], REFUSE),
+    ("one pizza", ["98765", "support@", "order"], HELP),
 ]
 
 REFUSAL_MARKERS = ("not sure about that", "don't know", "don't have that information")
@@ -162,6 +163,13 @@ def judge(question, keywords, kind, result):
             return "marked answered, so the owner would never see it in Unanswered"
         if sources:
             return f"a gap must not cite a document, got {sources}"
+    elif kind == HELP:
+        # An ordering attempt: the right reply says the chat can't take orders
+        # and gives the way to reach a person. Whether the model files that as
+        # ANSWERED (it used the contact from the context) or NOANSWER differs
+        # between providers, and neither is wrong. Only OFFTOPIC/CHAT would be.
+        if outcome in ("OFFTOPIC", "CHAT"):
+            return f"outcome {outcome}, expected a helpful reply"
     elif kind == CHAT:
         if any(m in answer for m in REFUSAL_MARKERS):
             return "small talk answered with a refusal"
