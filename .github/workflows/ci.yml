@@ -112,6 +112,11 @@ jobs:
         env:
           SECRET_KEY: ci-secret-not-used-anywhere-real
           GROQ_API_KEY: ${{ steps.scope.outputs.llm == 'true' && secrets.GROQ_API_KEY || '' }}
+          # Same model the hosted instance runs, so a green run means the
+          # deployed behaviour. Override with a repository variable when the
+          # host's model changes. Groq's daily budget is per model, so this
+          # also keeps CI off the budget of a model production has moved on from.
+          GROQ_MODEL: ${{ vars.GROQ_MODEL || 'openai/gpt-oss-120b' }}
           FLASK_DEBUG: "false"
           PYTHONUNBUFFERED: "1"     # so the server log is complete when it is printed on failure
         run: |
@@ -137,7 +142,8 @@ jobs:
         # rather than failing on a working app.
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          EVAL_MIN_CORRECT: "43"
+          GROQ_MODEL: ${{ vars.GROQ_MODEL || 'openai/gpt-oss-120b' }}
+          EVAL_MIN_CORRECT: "52"   # 53 cases; one documented miss tolerated
         run: |
           if [ -z "$GROQ_API_KEY" ]; then
             echo "GROQ_API_KEY secret not set — answer-quality suite skipped"; exit 0

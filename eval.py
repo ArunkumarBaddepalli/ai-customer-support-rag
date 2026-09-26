@@ -97,6 +97,17 @@ TEST_CASES = [
     ("this is useless", ["98765", "support@", "help"], CHAT),
     ("you are the worst bot ever", ["98765", "support@", "help"], CHAT),
     ("I want to talk to a human", ["98765", "support@"], CHAT),
+    # Real messages from a live session on 2026-09-27, every one of which the
+    # bot answered with "I don't have that information" plus the phone number.
+    ("wt is. ur job", ["assistant", "help"], CHAT),
+    ("what can you do", ["help", "assistant"], CHAT),
+    ("ok", ["anything else", "help"], CHAT),
+    ("haa", ["help", "know", "sure"], CHAT),
+    ("am iprety", [], REFUSE),
+    ("suggest me one good item", ["margherita", "pepperoni", "paneer", "tikka", "farmhouse", "pizza"], FACT),
+    ("food in pizza place", ["margherita", "pepperoni"], FACT),
+    ("wat r ur timings", ["11"], FACT),
+    ("one pizza", ["98765", "support@", "order"], REFUSE),
 ]
 
 REFUSAL_MARKERS = ("not sure about that", "don't know", "don't have that information")
