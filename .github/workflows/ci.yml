@@ -95,3 +95,30 @@ jobs:
       - name: Server log on failure
         if: failure()
         run: cat server.log
+
+  deploy:
+    # Deploys to Render only after the whole test job passed, and only for a
+    # push to main. The hosting side's own GitHub auto-deploy went silent on
+    # 2026-08-21 without any error surfacing anywhere — five weeks of pushes,
+    # including a security fix, never built. This step does not depend on that
+    # link: it calls Render's Deploy Hook, a URL whose only power is "build the
+    # configured branch now", which is the least privilege that does the job.
+    #
+    # Needs one repository secret, RENDER_DEPLOY_HOOK, copied from Render ->
+    # service -> Settings -> Deploy Hook. Without it the step says so and
+    # succeeds, so a fork or a checkout without deploy rights still gets a
+    # green run for its tests.
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger the Render deploy
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK secret not set — deploy skipped (tests passed)"; exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK" -o /dev/null -w "Render accepted the deploy: HTTP %{http_code}\n"
