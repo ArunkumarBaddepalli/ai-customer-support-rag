@@ -27,7 +27,10 @@ as context, so answers are grounded in facts you control — and you can show th
 2. **Retrieve** (`rag.py`) — embeds the question, searches **only that tenant's** index,
    and checks a similarity threshold.
 3. **Generate** (`rag.py`) — sends question + retrieved chunks to Groq
-   (`llama-3.1-8b-instant`), which answers from that context or handles small talk.
+   (`openai/gpt-oss-20b`), which answers from that context or handles small talk.
+   The model is set by `GROQ_MODEL`: Groq retired `llama-3.1-8b-instant` without
+   notice and every answer fell through to the error path, so the next retirement
+   is a config change on the host rather than a redeploy.
 4. **Serve** (`app.py`) — Flask: accounts, dashboard, and the public bot at `/c/<slug>`.
 
 ## Multi-tenancy
@@ -104,7 +107,7 @@ break the planned embed widget for no gain.
 | Auth | Flask sessions + PBKDF2-SHA256 password hashing (600k iterations) |
 | Embeddings | `sentence-transformers` (`all-MiniLM-L6-v2`) |
 | Vector search | FAISS (one index per tenant) |
-| LLM | Groq (`llama-3.1-8b-instant`, free API) |
+| LLM | Groq (`openai/gpt-oss-20b`, free API; `GROQ_MODEL` overrides) |
 | Database | Postgres in production, SQLite locally (same code) |
 | Email | Brevo, with Resend still supported — whichever key is set |
 | Frontend | HTML/CSS/vanilla JS, no framework |
@@ -126,8 +129,9 @@ to the console so local development and the tests need no mail account at all.
 ├── mailer.py          # transactional email (Brevo or Resend)
 ├── rag.py             # embed → search tenant's index → ask LLM → answer + sources
 ├── ingest.py          # per-tenant chunking and FAISS index building
-├── eval.py            # 41-case answer-quality suite
-├── tests/e2e.py       # 134-check end-to-end suite
+├── eval.py            # 44-case answer-quality suite
+├── tests/e2e.py       # 142-check end-to-end suite
+├── tests/test_units.py # 44 unit tests for the pure functions
 ├── seed_demo.py       # creates the Pizza Palace demo workspace
 ├── sample_docs/       # demo FAQ + example FAQs you can upload
 ├── data/<slug>/       # each tenant's FAISS index (rebuildable, gitignored)
@@ -235,9 +239,19 @@ from the database.
 
 ## Tests
 
-Two suites, testing different things.
+Three suites, testing different things. CI runs all of them on every push.
 
-**`tests/e2e.py` — 134 checks across every user perspective.** Start the app, then:
+**`tests/test_units.py` — 44 checks, no server, no key, under two seconds.**
+
+```bash
+python -m pytest -q tests/test_units.py
+```
+
+The pure functions — chunk merging, outcome parsing, text normalisation, slug
+rules, redirect safety, login backoff, CSRF — carry the most logic per line and
+had no test that did not also need the whole app running.
+
+**`tests/e2e.py` — 142 checks across every user perspective.** Start the app, then:
 
 ```bash
 python tests/e2e.py
@@ -263,13 +277,21 @@ It's written with `urllib` rather than curl deliberately: shell quoting silently
 mangled test values more than once and produced failures that looked like
 application bugs.
 
-**`eval.py` — 41 cases measuring answer quality.** See below.
+**`eval.py` — 44 cases measuring answer quality.** See below.
 
 ## Measuring accuracy (`eval.py`)
 
-41 fixed cases: every FAQ topic, plus small talk, abuse, off-topic questions, and
+44 fixed cases: every FAQ topic, plus small talk, abuse, off-topic questions,
+business questions the FAQ does *not* cover (which must be logged as gaps), and
 *negative* assertions for things that must never happen (asking the capital of France
 must not produce "Paris"; an insult must not be answered with "Hello").
+
+Each case names the kind of reply it expects, and the check reads the outcome label
+the bot attaches to its own answer: a **FACT** must be `ANSWERED` with a citation and
+the right keyword; a **REFUSE** must not be `ANSWERED` and must cite nothing; **CHAT**
+must never carry a refusal or a citation; a **GAP** must be `NOANSWER` so it reaches
+the owner's dashboard. Text is normalised before matching, so the model's typographic
+punctuation cannot fail a keyword.
 
 | Change | Score |
 |---|---|
@@ -278,13 +300,25 @@ must not produce "Paris"; an insult must not be answered with "Hello").
 | Lower `MIN_SIMILARITY` once retrieval was confirmed correct | 100% (31/31) |
 | Suite expanded to 37 cases (small talk, off-topic, leak checks) | 97.3% (36/37) |
 | Ambiguous FAQ wording fixed + `temperature=0` | 100% (37/37) |
-| Suite expanded to 41 cases (abuse handling, tone checks) | **100% (41/41)** |
+| Suite expanded to 41 cases (abuse handling, tone checks) | 100% (41/41) |
+| Groq retired the model; migrated to `gpt-oss-20b`. Three correct answers failed keyword matching (a non-breaking hyphen, a curly apostrophe, an unlisted refusal phrasing) | 92.7% (38/41) |
+| Judge by outcome label + normalised text; label rule fixed for "no", contact and procedure answers; 3 gap cases added | **97.7% (43/44)** |
 
 Two findings worth stating plainly:
 
 - **The first 100% was partly luck.** At `temperature=0.2` a different case failed each
   run — not because the answer was wrong, but because a correct answer phrased
   differently missed its keyword. Keyword matching flatters a nondeterministic model.
+- **Matching phrases hid mislabels that reading the label found.** Asked about a
+  change-of-mind refund, the bot answered correctly from the policy — and labelled
+  its own "no" as `NOANSWER`, so the right answer went out uncited and a question the
+  FAQ answers was logged as a gap. Contact details and the cold-order procedure were
+  mislabelled the same way. The keyword suite passed all three. The fix was the label
+  rule in the prompt, not the answers. One miss remains: asked *how to contact
+  support*, the model gives the number from the FAQ and still files it as the
+  fallback. The answer is right; it goes out uncited and lands on the gaps list. Left
+  as-is rather than hard-coded around — the label is the model's call, and the
+  design here is to under-cite rather than mis-cite.
 - **One failure was a bad document, not a bad bot.** "How late can I report a damaged
   order?" was ambiguous because the FAQ said both "within 30 minutes" and "not after 2
   hours". The fix was rewriting the FAQ. In RAG, answer quality is capped by document

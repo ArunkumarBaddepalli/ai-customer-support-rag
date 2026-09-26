@@ -19,6 +19,7 @@ a URL parameter, so a signed-in user can only ever touch their own workspace.
 import os
 import re
 import secrets
+import threading
 import time
 from datetime import timedelta
 from functools import wraps
@@ -112,6 +113,27 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_for=1)
 
 db.init_db()
 db.prune_expired()   # clear anything left over from a previous run
+
+
+def _prewarm():
+    """Load the embedding model now, not when the first customer asks.
+
+    Everything in rag.py loads lazily, which is right for `python eval.py`
+    and the tests — but in production it meant the first chat request after
+    every deploy paid for the model load: 7.5s measured, against 0.5s once
+    warm. Free hosting redeploys often and wipes the disk each time, so
+    "first request" was not rare. A daemon thread so boot is not blocked and
+    a hung load cannot keep the process alive; try/except so a failure here
+    is a log line, not a crash — the lazy path still works as a fallback.
+    """
+    try:
+        rag._get_embedder()
+        print("[warm] embedding model loaded")
+    except Exception as exc:
+        print(f"[warm] embedding model did not load: {type(exc).__name__}: {exc}")
+
+
+threading.Thread(target=_prewarm, name="prewarm-embedder", daemon=True).start()
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LENGTH = 8
@@ -218,6 +240,9 @@ def healthz():
         "backend": "postgres" if db.USE_POSTGRES else "sqlite",
         "mail": mailer.active_provider(),
         "cached_indexes": len(rag._indexes),
+        # False for a few seconds after boot while _prewarm runs; a platform
+        # health probe that reads this can hold traffic until it flips.
+        "embedder_ready": rag._embedder is not None,
     }
     return jsonify(body), (200 if body["ok"] else 503)
 
@@ -831,8 +856,15 @@ def _handle_logo_fields(tenant):
 def _read_upload(upload):
     """Validate one uploaded file and return (filename, content)."""
     filename = secure_filename(upload.filename)
-    if not filename.endswith(".txt"):
+    # Case-insensitive, to match the dashboard's JavaScript, which already
+    # accepts PARKING.TXT. When the two disagreed the browser showed the file
+    # as fine and the server rejected it — and because a multi-file batch is
+    # validated as a whole, one uppercase name failed every file beside it.
+    # The extension is stored lower-cased so a.txt and A.TXT cannot become two
+    # documents for the same content.
+    if not filename.lower().endswith(".txt"):
         raise ValueError(f"Only .txt files are supported — '{upload.filename}' isn't one.")
+    filename = filename[:-4] + ".txt"
     try:
         content = upload.read().decode("utf-8")
     except UnicodeDecodeError:

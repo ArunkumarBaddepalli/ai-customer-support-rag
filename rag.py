@@ -71,10 +71,22 @@ _cache_lock = threading.Lock()
 _build_locks = {}
 
 
+_embedder_lock = threading.Lock()
+
+
 def _get_embedder():
+    """The embedding model, loaded once.
+
+    Locked because app.py now pre-warms it from a background thread at boot
+    while the first request may arrive at the same moment. Without the lock
+    both would construct a SentenceTransformer — two copies of the model,
+    transiently, on an instance sized for one.
+    """
     global _embedder
     if _embedder is None:
-        _embedder = SentenceTransformer(EMBED_MODEL)
+        with _embedder_lock:
+            if _embedder is None:
+                _embedder = SentenceTransformer(EMBED_MODEL)
     return _embedder
 
 
@@ -179,7 +191,10 @@ def _get_groq_client():
     global _groq_client
     if _groq_client is None:
         from groq import Groq
-        api_key = os.getenv("GROQ_API_KEY")
+        # Stripped: a secret pasted into a hosting or CI dashboard often
+        # carries a trailing newline, which makes every request fail with an
+        # invalid header and no useful error anywhere.
+        api_key = (os.getenv("GROQ_API_KEY") or "").strip()
         if not api_key:
             raise RuntimeError("GROQ_API_KEY not set. Add it to your .env file.")
         # An explicit timeout, because the default is none: a hung connection
@@ -227,10 +242,28 @@ SHARED_RULES = (
 # Asking the model to label its own outcome beats guessing from its wording,
 # which varies every run. The options are branch-specific on purpose: listing
 # ANSWERED when no context exists made the model pick it every time.
+# ANSWERED spells out two cases the model was getting wrong. Asked "can I get a
+# refund if I change my mind?", it replied correctly from the policy ("we can't
+# refund a change of mind once out for delivery") and labelled it NOANSWER —
+# reading its own "no" as "no answer". Asked how to contact support, it gave
+# the number from the Contact section and labelled that NOANSWER too, because
+# "here is the support contact" is also what the fallback says. Asked what to
+# do about a cold order, it gave the procedure from the returns policy and
+# labelled that NOANSWER as well. So the rule is now stated by the one thing
+# that separates them: NOANSWER means you said you don't have the information;
+# anything drawn from the context is ANSWERED. The mislabels
+# had a product cost: the correct answer went out uncited, and a question the
+# FAQ answers was logged on the owner's gaps dashboard as missing. Found by
+# eval.py once it started reading the label instead of matching phrases.
 MARKER_WITH_CONTEXT = (
     "After your reply, on a new line, write exactly ONE of these words:\n"
-    "  ANSWERED  - you answered using the context above\n"
-    "  NOANSWER  - a question about this business the context did not answer\n"
+    "  ANSWERED  - the facts in your reply came from the context above: a yes, a no, "
+    "a price, a time, a procedure. Also when they asked how to contact the business "
+    "and you gave the contact details from the context - that is an answer, not a "
+    "fallback.\n"
+    "  NOANSWER  - they asked about this business, the context does not cover it, and "
+    "you told them you don't have that information. Pointing them to support in that "
+    "case is still NOANSWER.\n"
     "  OFFTOPIC  - the message had nothing to do with this business\n"
     "  CHAT      - a greeting, pleasantry, complaint or insult\n"
 )
@@ -266,25 +299,44 @@ One word:"""
 
 
 def _classify_message(client, question, company_name):
-    """CHAT / OFFTOPIC / QUESTION for messages retrieval couldn't answer."""
+    """CHAT / OFFTOPIC / QUESTION for messages retrieval couldn't answer.
+
+    Goes through _complete_with_retry, the same path as the answer itself,
+    for two reasons that were both live bugs:
+
+    A hardcoded max_tokens=5 was enough for a one-word label on the original
+    model. gpt-oss is a reasoning model and spends the completion budget on
+    hidden reasoning *before* the visible text, so with 5 tokens it returned
+    content='' with finish_reason='length' — every single time. Every call
+    fell through to the CHAT fallback below, is_gap was never True, and no
+    low-similarity business question ever reached the Unanswered dashboard.
+    "is there parking" was answered correctly with "I don't have that" and
+    then vanished. _model_kwargs() already carries the per-family budget.
+
+    It also had no retry, so under the same 429 burst the answer call
+    survives (honouring Retry-After), the classifier failed and — again —
+    silently returned CHAT.
+    """
+    prompt = CLASSIFY_PROMPT.format(company=company_name, message=question)
+    label = ""
     try:
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{
-                "role": "user",
-                "content": CLASSIFY_PROMPT.format(company=company_name, message=question),
-            }],
-            temperature=0,
-            max_tokens=5,
-        )
-        label = response.choices[0].message.content.strip().upper()
+        response = _complete_with_retry(client, prompt, attempts=3)
+        label = (response.choices[0].message.content or "").strip().upper()
         for known in ("CHAT", "OFFTOPIC", "QUESTION"):
             if known in label:
                 return known
+        # Offered three words, the model sometimes answers with a finer one it
+        # was not given — "INSULT" for "idiot" — which is a CHAT by our rules.
+        if any(w in label for w in ("GREET", "THANK", "INSULT", "COMPLAIN", "PLEASANT", "SMALL")):
+            return "CHAT"
+        if any(w in label for w in ("TRIVIA", "UNRELATED", "GENERAL")):
+            return "OFFTOPIC"
     except Exception as exc:
         print(f"[rag] classify failed: {type(exc).__name__}: {exc}")
     # Unsure? Treat it as small talk. Logging a false gap is worse than missing
-    # one — a dashboard full of "hi" is what makes the list useless.
+    # one — a dashboard full of "hi" is what makes the list useless. But say
+    # so: this fallback ran silently for weeks while the feature was dead.
+    print(f"[rag] classify fell back to CHAT (label was {label[:40]!r})")
     return "CHAT"
 
 
@@ -480,13 +532,41 @@ def ask(question, tenant):
 
 OUTCOMES = ("ANSWERED", "NOANSWER", "OFFTOPIC", "CHAT")
 
+# The model writes typographic punctuation: a narrow no-break space in "7 pm",
+# a non-breaking hyphen in "peri‑peri", a curly apostrophe in "don’t". A browser
+# renders every one of them identically to the ASCII character, so nothing
+# looks wrong — but everything downstream that *compares* strings sees a
+# different byte sequence. That is how eval.py reported three failures on
+# answers that were correct, and how the one e2e check on "7 pm" went red.
+# Normalise once, at the boundary where the model's text enters the system,
+# so no caller has to remember to.
+_TYPOGRAPHY = str.maketrans({
+    "\u00a0": " ", "\u2009": " ", "\u202f": " ",   # no-break, thin, narrow no-break space
+    "\u2010": "-", "\u2011": "-", "\u2012": "-",   # hyphen, non-breaking hyphen, figure dash
+    "\u2018": "'", "\u2019": "'",                  # curly single quotes
+    "\u201c": '"', "\u201d": '"',                  # curly double quotes
+})
+
+
+def normalize_text(text):
+    """ASCII spaces, hyphens and quotes in place of their typographic twins.
+
+    Words are untouched; only the punctuation a keyboard would have produced
+    is restored. Dashes (en, em) are left alone — they are real typography,
+    not a look-alike for something else.
+    """
+    return text.translate(_TYPOGRAPHY)
+
 
 def _split_outcome(raw):
     """Strip the trailing outcome label off the model's reply.
 
     Returns (clean_answer, outcome). If the label is missing we fall back to
     CHAT, which neither cites a document nor logs a gap — the safe default.
+    The text is normalised first, so the label check and every caller see
+    plain punctuation.
     """
+    raw = normalize_text(raw)
     lines = raw.rstrip().splitlines()
     if not lines:
         return raw, "CHAT"

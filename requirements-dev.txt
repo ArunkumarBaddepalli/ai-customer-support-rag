@@ -1,0 +1,4 @@
+# Test-only dependencies. Kept out of requirements.txt so the production
+# image does not carry a test runner it never uses. Pinned for the same
+# reason everything else is: two runs of the same source, the same code.
+pytest==9.1.1

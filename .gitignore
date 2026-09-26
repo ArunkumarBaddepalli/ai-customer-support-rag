@@ -9,3 +9,6 @@ data/
 documents/
 static/logos/
 .env.bak
+
+# macOS Finder metadata
+.DS_Store
