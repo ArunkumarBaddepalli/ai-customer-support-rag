@@ -11,11 +11,16 @@ function addMessage(text, role, sources = []) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.textContent = role === "user" ? "🧑" : "🤖";
+  if (role === "user") {
+    avatar.textContent = "🧑";
+  } else {
+    avatar.classList.add("bot-avatar");
+    avatar.appendChild(botAvatar());
+  }
 
   const bubble = document.createElement("div");
   bubble.className = "message";
-  bubble.textContent = text;
+  renderAnswer(bubble, text);
 
   if (sources.length) {
     const src = document.createElement("span");
@@ -37,13 +42,51 @@ function addMessage(text, role, sources = []) {
   return row;
 }
 
+/* The model writes plain text with line breaks and "- " bullets. Setting it
+   as textContent collapsed all of that into one run-on paragraph, so a list
+   of prices or opening hours arrived as a single line. Built from DOM nodes,
+   never innerHTML: the text is the model's, not ours to trust as markup. */
+function renderAnswer(bubble, text) {
+  const lines = String(text).split(/\r?\n/);
+  let list = null;
+  lines.forEach((line) => {
+    const item = line.match(/^\s*(?:[-*\u2022]|\d+[.)])\s+(.*)$/);
+    if (item) {
+      if (!list) { list = document.createElement("ul"); bubble.appendChild(list); }
+      const li = document.createElement("li");
+      li.textContent = item[1];
+      list.appendChild(li);
+      return;
+    }
+    list = null;
+    if (!line.trim()) return;
+    const p = document.createElement("p");
+    p.textContent = line;
+    bubble.appendChild(p);
+  });
+  if (!bubble.childNodes.length) bubble.textContent = text;
+}
+
+/* The business's own logo or initial, same as the header — a generic robot
+   next to a branded header looked like two different products. */
+function botAvatar() {
+  const tpl = document.getElementById("bot-avatar");
+  if (tpl && tpl.content.firstElementChild) return tpl.content.firstElementChild.cloneNode(true);
+  const fallback = document.createElement("span");
+  fallback.textContent = "🤖";
+  return fallback;
+}
+
 function showTyping() {
   const row = document.createElement("div");
   row.className = "row bot typing";
-  row.innerHTML = `
-    <div class="avatar">🤖</div>
-    <div class="message"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
-  `;
+  const avatar = document.createElement("div");
+  avatar.className = "avatar bot-avatar";
+  avatar.appendChild(botAvatar());
+  const message = document.createElement("div");
+  message.className = "message";
+  message.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+  row.append(avatar, message);
   messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
   return row;
@@ -86,7 +129,7 @@ form.addEventListener("submit", async (e) => {
     }
   } catch (err) {
     typingRow.remove();
-    addMessage("Could not reach the server. Is app.py running?", "bot");
+    addMessage("Couldn't reach the assistant just now — please try again in a moment.", "bot");
   } finally {
     input.disabled = false;
     input.focus();

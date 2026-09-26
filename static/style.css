@@ -125,7 +125,9 @@ header .status i { width: 5px; height: 5px; border-radius: 50%; background: #4ad
   background: #e9eaef;
 }
 
-.row.bot .avatar { background: var(--brand-color); }
+.row.bot .avatar { background: var(--brand-color); overflow: hidden; }
+.bot-avatar .logo-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bot-avatar .logo-initial { display: grid; place-items: center; width: 100%; height: 100%; color: #fff; font-weight: 700; font-size: 13px; }
 
 .message {
   max-width: 76%;
@@ -147,6 +149,11 @@ header .status i { width: 5px; height: 5px; border-radius: 50%; background: #4ad
   color: #23262d;
   border-bottom-left-radius: 5px;
 }
+
+.message p { margin: 0; }
+.message p + p, .message p + ul, .message ul + p { margin-top: 7px; }
+.message ul { margin: 0; padding-left: 18px; }
+.message li { margin: 2px 0; }
 
 .message .source {
   display: inline-block;
@@ -259,6 +266,7 @@ header .status i { width: 5px; height: 5px; border-radius: 50%; background: #4ad
 
 @media (max-width: 560px) {
   body { padding: 0; }
+  header p { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .chat-container { height: 100vh; border-radius: 0; max-width: none; }
   .message { max-width: 84%; }
   .chips { padding-left: 0; }
